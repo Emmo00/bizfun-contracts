@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {PredictionMarket} from "../src/PredictionMarket.sol";
 import {PredictionMarketFactory} from "../src/PredictionMarketFactory.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
 
 /// @dev Minimal ERC-20 mock for testing (USDC-style, 6 decimals).
 contract MockUSDC {
@@ -75,7 +74,7 @@ contract PredictionMarketTest is Test {
     // ================================================================
 
     function test_factoryDeployment() public view {
-        assertEq(address(factory.collateralToken()), address(usdc));
+        assertEq(address(factory.COLLATERAL_TOKEN()), address(usdc));
         assertEq(factory.owner(), owner);
         assertEq(factory.creationFee(), CREATION_FEE);
         assertEq(factory.initialLiquidity(), INITIAL_LIQUIDITY);
@@ -164,7 +163,7 @@ contract PredictionMarketTest is Test {
     function test_createMarket_setsCreatorOnMarket() public {
         address market = _createMarket(alice);
         PredictionMarket pm = PredictionMarket(market);
-        assertEq(pm.creator(), alice);
+        assertEq(pm.CREATOR(), alice);
     }
 
     function test_createMarket_rejectsZeroOracle() public {
@@ -400,7 +399,7 @@ contract PredictionMarketTest is Test {
         // In a real system the LMSR guarantees solvency; here the demo
         // math is approximate, so we top-up the market balance to cover
         // the payout (shares == 5e18).
-        uint marketBal = IERC20(address(usdc)).balanceOf(market);
+        uint marketBal = usdc.balanceOf(market);
         if (marketBal < shares) {
             usdc.mint(market, shares - marketBal);
         }

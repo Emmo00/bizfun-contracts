@@ -40,7 +40,7 @@ contract PredictionMarketFactory {
 
     // ---------------- STATE ----------------
 
-    IERC20 public immutable collateralToken; // USDC (single global token)
+    IERC20 public immutable COLLATERAL_TOKEN; // USDC (single global token)
 
     address public owner;
     uint public creationFee;        // total fee charged to creator (in USDC, 6-decimal)
@@ -54,8 +54,12 @@ contract PredictionMarketFactory {
     // ---------------- MODIFIERS ----------------
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
+        _onlyOwner();
         _;
+    }
+
+    function _onlyOwner() internal view {
+        require(msg.sender == owner, "Not owner");
     }
 
     // ---------------- CONSTRUCTOR ----------------
@@ -71,7 +75,7 @@ contract PredictionMarketFactory {
         require(_collateralToken != address(0), "Invalid token");
         require(_initialLiquidity <= _creationFee, "Liquidity > fee");
 
-        collateralToken = IERC20(_collateralToken);
+        COLLATERAL_TOKEN = IERC20(_collateralToken);
         owner = msg.sender;
         creationFee = _creationFee;
         initialLiquidity = _initialLiquidity;
@@ -87,32 +91,32 @@ contract PredictionMarketFactory {
     /// @param _tradingDeadline  Timestamp after which trading stops.
     /// @param _resolveTime      Timestamp after which the oracle can resolve.
     /// @param _b                LMSR liquidity parameter (scaled to 1e18).
-    /// @param _metadataURI      Off-chain metadata URI (IPFS, Arweave, HTTPS).
+    /// @param _metadataUri      Off-chain metadata URI (IPFS, Arweave, HTTPS).
     /// @return marketAddress    Address of the newly deployed PredictionMarket.
     function createMarket(
         address _oracle,
         uint _tradingDeadline,
         uint _resolveTime,
         uint _b,
-        string calldata _metadataURI
+        string calldata _metadataUri
     ) external returns (address marketAddress) {
         require(_oracle != address(0), "Invalid oracle");
         require(_tradingDeadline > block.timestamp, "Deadline in past");
         require(_resolveTime >= _tradingDeadline, "Resolve before deadline");
         require(_b > 0, "Invalid liquidity param");
-        require(bytes(_metadataURI).length > 0, "Empty metadata URI");
+        require(bytes(_metadataUri).length > 0, "Empty metadata URI");
 
         // ----- Collect creation fee from caller -----
         if (creationFee > 0) {
             require(
-                collateralToken.transferFrom(msg.sender, address(this), creationFee),
+                COLLATERAL_TOKEN.transferFrom(msg.sender, address(this), creationFee),
                 "Fee transfer failed"
             );
         }
 
         // ----- Deploy new PredictionMarket -----
         PredictionMarket market = new PredictionMarket(
-            address(collateralToken),
+            address(COLLATERAL_TOKEN),
             _oracle,
             msg.sender,        // creator
             _tradingDeadline,
@@ -127,7 +131,7 @@ contract PredictionMarketFactory {
             uint halfLiquidity = initialLiquidity / 2;
 
             // Approve the market to pull USDC from this factory
-            collateralToken.approve(marketAddress, initialLiquidity);
+            COLLATERAL_TOKEN.approve(marketAddress, initialLiquidity);
 
             // Buy YES shares (factory holds them — they serve as liquidity, not profit)
             if (halfLiquidity > 0) {
@@ -146,7 +150,7 @@ contract PredictionMarketFactory {
         MarketInfo memory info = MarketInfo({
             market: marketAddress,
             creator: msg.sender,
-            metadataURI: _metadataURI,
+            metadataURI: _metadataUri,
             createdAt: block.timestamp
         });
         markets[id] = info;
@@ -163,7 +167,7 @@ contract PredictionMarketFactory {
             _resolveTime,
             _b,
             initialLiquidity,
-            _metadataURI
+            _metadataUri
         );
     }
 
@@ -171,24 +175,24 @@ contract PredictionMarketFactory {
 
     /// @notice Update the off-chain metadata URI for a market you created.
     /// @param _market   Address of the PredictionMarket.
-    /// @param _newURI   New metadata URI.
-    function updateMetadataURI(address _market, string calldata _newURI) external {
+    /// @param _newUri   New metadata URI.
+    function updateMetadataURI(address _market, string calldata _newUri) external {
         MarketInfo storage info = marketInfoByAddress[_market];
         require(info.market != address(0), "Market not found");
         require(info.creator == msg.sender, "Not market creator");
-        require(bytes(_newURI).length > 0, "Empty metadata URI");
+        require(bytes(_newUri).length > 0, "Empty metadata URI");
 
-        info.metadataURI = _newURI;
+        info.metadataURI = _newUri;
 
         // Also update the id-based mapping
         for (uint i = 0; i < marketCount; i++) {
             if (markets[i].market == _market) {
-                markets[i].metadataURI = _newURI;
+                markets[i].metadataURI = _newUri;
                 break;
             }
         }
 
-        emit MetadataUpdated(_market, _newURI);
+        emit MetadataUpdated(_market, _newUri);
     }
 
     // ---------------- VIEW HELPERS ----------------
@@ -243,10 +247,10 @@ contract PredictionMarketFactory {
     /// @notice Withdraw accumulated protocol fees (fee - initialLiquidity portion per market).
     function withdrawFees(address _to, uint _amount) external onlyOwner {
         require(_to != address(0), "Invalid address");
-        uint balance = collateralToken.balanceOf(address(this));
+        uint balance = COLLATERAL_TOKEN.balanceOf(address(this));
         require(_amount <= balance, "Insufficient balance");
 
-        require(collateralToken.transfer(_to, _amount), "Withdraw failed");
+        require(COLLATERAL_TOKEN.transfer(_to, _amount), "Withdraw failed");
 
         emit FeesWithdrawn(_to, _amount);
     }

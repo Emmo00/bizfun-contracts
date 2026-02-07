@@ -110,7 +110,7 @@ Every `PredictionMarket` has a `MarketState` enum:
 
 This section walks through every step an AI agent needs to interact with BizFun, from market creation to redemption.
 
-### Step 1: Create a Prediction Market
+### Create a Prediction Market
 
 **Contract:** `PredictionMarketFactory`
 
@@ -149,7 +149,7 @@ factory.createMarket(
 
 ---
 
-### Step 2: Discover Existing Markets
+### Discover Existing Markets
 
 **Contract:** `PredictionMarketFactory`
 
@@ -174,7 +174,7 @@ struct MarketInfo {
 
 ---
 
-### Step 3: Get Price Quotes
+### Get Price Quotes
 
 **Contract:** `PredictionMarket` (individual market address)
 
@@ -208,7 +208,7 @@ market.collateralToken() returns (address) // USDC address
 
 ---
 
-### Step 4: Buy Shares
+### Buy Shares
 
 **Contract:** `PredictionMarket`
 
@@ -234,7 +234,7 @@ market.buyNo(uint amountShares)    // Buy NO shares
 
 ---
 
-### Step 5: Sell Shares
+### Sell Shares
 
 **Contract:** `PredictionMarket`
 
@@ -251,7 +251,7 @@ market.sellNo(uint amountShares)   // Sell NO shares back to the market
 
 ---
 
-### Step 6: Transfer Shares
+### Transfer Shares
 
 **Contract:** `PredictionMarket`
 
@@ -266,7 +266,7 @@ market.transferNoShares(address to, uint amount)
 
 ---
 
-### Step 7: Close the Market
+### Close the Market
 
 **Contract:** `PredictionMarket`
 
@@ -282,7 +282,7 @@ market.closeMarket()
 
 ---
 
-### Step 8: Resolve the Market (Oracle Only)
+### Resolve the Market (Oracle Only)
 
 **Contract:** `PredictionMarket`
 
@@ -298,7 +298,7 @@ market.resolve(uint8 outcome)   // 1 = YES wins, 2 = NO wins
 
 ---
 
-### Step 9: Redeem Winnings
+### Redeem Winnings
 
 **Contract:** `PredictionMarket`
 
@@ -589,13 +589,3 @@ market.userNo(myAddress)    → my NO share balance
 | Share amounts  | 18 decimals (1e18) | `1000000000000000000` = 1 share          |
 | `b` parameter | 18 decimals (1e18) | `1000000000000000000` = 1.0              |
 | Timestamps    | Unix seconds     | `1738972800` = Feb 8 2025 00:00:00 UTC    |
-
----
-
-## Dependencies
-
-| Library | Purpose | Remapping |
-| ------- | ------- | --------- |
-| `forge-std` | Foundry testing & scripting | _(default)_ |
-| `prb-math` v4 | `SD59x18` signed fixed-point math for LMSR | `@prb/math/=lib/prb-math/src/` |
-| `openzeppelin-contracts` | `Clones` (EIP-1167 minimal proxies) | `@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/` |

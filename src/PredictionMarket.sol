@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "./interfaces/IERC20.sol";
+import {SD59x18, sd, unwrap} from "@prb/math/SD59x18.sol";
 
 contract PredictionMarket {
     enum MarketState { OPEN, CLOSED, RESOLVED }
@@ -62,35 +63,27 @@ contract PredictionMarket {
         _;
     }
 
-    // ---------------- LMSR MATH ----------------
+    // ---------------- LMSR MATH (PRBMath SD59x18) ----------------
 
-    function _exp(int x) internal pure returns (uint) {
-        // Very rough approximation for demo purposes
-        // Production systems use better libraries
-        if (x < -41e18) return 0;
-        uint sum = ONE;
-        uint term = ONE;
-        for (uint i = 1; i < 20; i++) {
-            term = (term * uint(x < 0 ? -x : x)) / (ONE * i);
-            sum += term;
-        }
-        return sum;
-    }
-
+    /// @dev LMSR cost function: C(qYes, qNo) = b * ln(exp(qYes/b) + exp(qNo/b))
+    ///      Uses the log-sum-exp trick to avoid overflow:
+    ///        C = b * (m + ln(exp(a - m) + exp(c - m)))
+    ///      where a = qYes/b, c = qNo/b, m = max(a, c).
+    ///      Since one of the exp terms is always exp(0) = 1, the ln argument is always >= 1.
     function _cost(uint qYes, uint qNo) internal view returns (uint) {
-        uint expYes = _exp(int(qYes * ONE / b));
-        uint expNo  = _exp(int(qNo * ONE / b));
-        return (b * _ln(expYes + expNo)) / ONE;
-    }
+        SD59x18 bFixed = sd(int256(b));
+        SD59x18 a = sd(int256(qYes)).div(bFixed);
+        SD59x18 c = sd(int256(qNo)).div(bFixed);
 
-    function _ln(uint x) internal pure returns (uint) {
-        // Simplified natural log approximation
-        uint result = 0;
-        while (x >= 2 * ONE) {
-            x /= 2;
-            result += 693147180559945309; // ln(2)
-        }
-        return result;
+        // m = max(a, c)
+        SD59x18 m = a.gt(c) ? a : c;
+
+        // log-sum-exp: m + ln(exp(a - m) + exp(c - m))
+        SD59x18 sumExp = (a.sub(m)).exp().add((c.sub(m)).exp());
+        SD59x18 result = bFixed.mul(m.add(sumExp.ln()));
+
+        int256 raw = unwrap(result);
+        return raw > 0 ? uint(raw) : 0;
     }
 
     /// @notice Returns the current cost to buy `amountShares` of YES shares.

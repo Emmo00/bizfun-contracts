@@ -277,6 +277,7 @@ contract PredictionMarketTest is Test {
         uint shares = 1e18;
         uint cost = pm.quoteBuyYes(shares);
 
+        usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
         pm.buyYes(shares);
@@ -292,6 +293,7 @@ contract PredictionMarketTest is Test {
         uint shares = 1e18;
         uint cost = pm.quoteBuyNo(shares);
 
+        usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
         pm.buyNo(shares);

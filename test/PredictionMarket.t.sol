@@ -507,4 +507,199 @@ contract PredictionMarketTest is Test {
         vm.expectRevert("Market not found");
         factory.getMarketMetadata(makeAddr("random"));
     }
+
+    // ================================================================
+    //                   SHARE TRANSFER TESTS
+    // ================================================================
+
+    function test_transferYesShares() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Bob buys YES shares
+        uint shares = 2e18;
+        uint cost = pm.quoteBuyYes(shares);
+        usdc.mint(bob, cost);
+        vm.startPrank(bob);
+        usdc.approve(market, cost);
+        pm.buyYes(shares);
+
+        // Bob transfers half to alice
+        uint transferAmt = 1e18;
+        pm.transferYesShares(alice, transferAmt);
+        vm.stopPrank();
+
+        assertEq(pm.userYes(bob), shares - transferAmt);
+        assertEq(pm.userYes(alice) >= transferAmt, true); // alice may already have some from liquidity
+    }
+
+    function test_transferNoShares() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Bob buys NO shares
+        uint shares = 2e18;
+        uint cost = pm.quoteBuyNo(shares);
+        usdc.mint(bob, cost);
+        vm.startPrank(bob);
+        usdc.approve(market, cost);
+        pm.buyNo(shares);
+
+        // Bob transfers half to alice
+        uint transferAmt = 1e18;
+        pm.transferNoShares(alice, transferAmt);
+        vm.stopPrank();
+
+        assertEq(pm.userNo(bob), shares - transferAmt);
+        assertEq(pm.userNo(alice) >= transferAmt, true);
+    }
+
+    function test_transferYesShares_rejectsInsufficientBalance() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        vm.prank(bob);
+        vm.expectRevert("Insufficient YES shares");
+        pm.transferYesShares(alice, 1e18);
+    }
+
+    function test_transferNoShares_rejectsInsufficientBalance() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        vm.prank(bob);
+        vm.expectRevert("Insufficient NO shares");
+        pm.transferNoShares(alice, 1e18);
+    }
+
+    function test_transferYesShares_rejectsZeroAddress() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Alice should have liquidity shares from factory seeding
+        uint aliceYes = pm.userYes(alice);
+        assertTrue(aliceYes > 0, "Alice should have YES shares from liquidity");
+
+        vm.prank(alice);
+        vm.expectRevert("Invalid recipient");
+        pm.transferYesShares(address(0), aliceYes);
+    }
+
+    // ================================================================
+    //                  EMERGENCY PAUSE TESTS
+    // ================================================================
+
+    function test_pause_blocksTrading() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Oracle pauses the market
+        vm.prank(oracle);
+        pm.pause();
+        assertTrue(pm.paused());
+
+        // Bob tries to buy — should revert
+        uint shares = 1e18;
+        uint cost = pm.quoteBuyYes(shares);
+        usdc.mint(bob, cost);
+        vm.startPrank(bob);
+        usdc.approve(market, cost);
+        vm.expectRevert("Market paused");
+        pm.buyYes(shares);
+        vm.stopPrank();
+    }
+
+    function test_unpause_resumesTrading() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Pause then unpause
+        vm.prank(oracle);
+        pm.pause();
+        vm.prank(oracle);
+        pm.unpause();
+        assertFalse(pm.paused());
+
+        // Bob can trade again
+        uint shares = 1e18;
+        uint cost = pm.quoteBuyYes(shares);
+        usdc.mint(bob, cost);
+        vm.startPrank(bob);
+        usdc.approve(market, cost);
+        pm.buyYes(shares);
+        vm.stopPrank();
+
+        assertEq(pm.userYes(bob), shares);
+    }
+
+    function test_pause_rejectsNonOracle() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        vm.prank(bob);
+        vm.expectRevert("Not oracle");
+        pm.pause();
+    }
+
+    function test_unpause_rejectsNonOracle() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        vm.prank(oracle);
+        pm.pause();
+
+        vm.prank(bob);
+        vm.expectRevert("Not oracle");
+        pm.unpause();
+    }
+
+    // ================================================================
+    //               RESOLVE AUTO-CLOSE TESTS
+    // ================================================================
+
+    function test_resolve_autoClosesOpenMarket() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Don't manually close — go straight to resolve
+        vm.warp(block.timestamp + 9 days);
+        vm.prank(oracle);
+        pm.resolve(2); // NO wins
+
+        // Should be RESOLVED (auto-closed internally)
+        assertEq(uint(pm.marketState()), uint(PredictionMarket.MarketState.RESOLVED));
+        assertEq(pm.resolvedOutcome(), 2);
+    }
+
+    // ================================================================
+    //                  MAX FEE CAP TESTS
+    // ================================================================
+
+    function test_setCreationFee_rejectsAboveMaxFee() public {
+        uint maxFee = factory.MAX_CREATION_FEE();
+        vm.expectRevert("Fee exceeds max");
+        factory.setCreationFee(maxFee + 1);
+    }
+
+    function test_factoryConstructor_rejectsAboveMaxFee() public {
+        vm.expectRevert("Fee exceeds max");
+        new PredictionMarketFactory(address(usdc), 2000e6, 100e6);
+    }
+
+    // ================================================================
+    //          CREATOR RECEIVES LIQUIDITY SHARES TESTS
+    // ================================================================
+
+    function test_createMarket_transfersLiquiditySharesToCreator() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Factory should hold zero shares
+        assertEq(pm.userYes(address(factory)), 0, "Factory should hold 0 YES shares");
+        assertEq(pm.userNo(address(factory)), 0, "Factory should hold 0 NO shares");
+
+        // Alice (creator) should hold the liquidity shares
+        assertTrue(pm.userYes(alice) > 0, "Creator should hold YES shares");
+        assertTrue(pm.userNo(alice) > 0, "Creator should hold NO shares");
+    }
 }

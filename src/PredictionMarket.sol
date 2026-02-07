@@ -11,8 +11,11 @@ contract PredictionMarket {
 
     event SharesBought(address indexed user, bool indexed isYes, uint shares, uint cost);
     event SharesSold(address indexed user, bool indexed isYes, uint shares, uint refund);
+    event SharesTransferred(address indexed from, address indexed to, bool indexed isYes, uint shares);
     event MarketClosed();
     event MarketResolved(uint8 outcome);
+    event MarketPaused();
+    event MarketUnpaused();
     event Redeemed(address indexed user, uint payout);
 
     // ---------------- STATE ----------------
@@ -26,6 +29,7 @@ contract PredictionMarket {
 
     MarketState public marketState;
     uint8 public resolvedOutcome; // 1 = YES, 2 = NO
+    bool public paused;
 
     uint public yesShares;
     uint public noShares;
@@ -67,6 +71,7 @@ contract PredictionMarket {
     }
 
     function _onlyOpen() internal view {
+        require(!paused, "Market paused");
         require(marketState == MarketState.OPEN, "Market not open");
         require(block.timestamp < TRADING_DEADLINE, "Trading ended");
     }
@@ -185,6 +190,12 @@ contract PredictionMarket {
         require(marketState != MarketState.RESOLVED, "Already resolved");
         require(outcome == 1 || outcome == 2, "Invalid outcome");
 
+        // Auto-close if still OPEN (enforces OPEN → CLOSED → RESOLVED lifecycle)
+        if (marketState == MarketState.OPEN) {
+            marketState = MarketState.CLOSED;
+            emit MarketClosed();
+        }
+
         resolvedOutcome = outcome;
         marketState = MarketState.RESOLVED;
 
@@ -209,5 +220,45 @@ contract PredictionMarket {
         require(COLLATERAL_TOKEN.transfer(msg.sender, payout), "Transfer failed");
 
         emit Redeemed(msg.sender, payout);
+    }
+
+    // ---------------- SHARE TRANSFERS ----------------
+
+    /// @notice Transfer YES shares to another address.
+    function transferYesShares(address _to, uint _amount) external {
+        require(_to != address(0), "Invalid recipient");
+        require(userYes[msg.sender] >= _amount, "Insufficient YES shares");
+
+        userYes[msg.sender] -= _amount;
+        userYes[_to] += _amount;
+
+        emit SharesTransferred(msg.sender, _to, true, _amount);
+    }
+
+    /// @notice Transfer NO shares to another address.
+    function transferNoShares(address _to, uint _amount) external {
+        require(_to != address(0), "Invalid recipient");
+        require(userNo[msg.sender] >= _amount, "Insufficient NO shares");
+
+        userNo[msg.sender] -= _amount;
+        userNo[_to] += _amount;
+
+        emit SharesTransferred(msg.sender, _to, false, _amount);
+    }
+
+    // ---------------- EMERGENCY ----------------
+
+    /// @notice Pause trading on this market. Only callable by the oracle.
+    function pause() external onlyOracle {
+        require(!paused, "Already paused");
+        paused = true;
+        emit MarketPaused();
+    }
+
+    /// @notice Unpause trading on this market. Only callable by the oracle.
+    function unpause() external onlyOracle {
+        require(paused, "Not paused");
+        paused = false;
+        emit MarketUnpaused();
     }
 }

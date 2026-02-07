@@ -12,6 +12,7 @@ contract PredictionMarketFactory {
     // ---------------- STRUCTS ----------------
 
     struct MarketInfo {
+        uint    marketId;       // sequential market id
         address market;         // deployed PredictionMarket address
         address creator;        // who created the market
         string  metadataURI;    // IPFS / Arweave / HTTPS link to off-chain JSON metadata
@@ -41,6 +42,8 @@ contract PredictionMarketFactory {
     // ---------------- STATE ----------------
 
     IERC20 public immutable COLLATERAL_TOKEN; // USDC (single global token)
+
+    uint public constant MAX_CREATION_FEE = 1000e6; // $1000 USDC cap
 
     address public owner;
     uint public creationFee;        // total fee charged to creator (in USDC, 6-decimal)
@@ -73,6 +76,7 @@ contract PredictionMarketFactory {
         uint _initialLiquidity
     ) {
         require(_collateralToken != address(0), "Invalid token");
+        require(_creationFee <= MAX_CREATION_FEE, "Fee exceeds max");
         require(_initialLiquidity <= _creationFee, "Liquidity > fee");
 
         COLLATERAL_TOKEN = IERC20(_collateralToken);
@@ -125,29 +129,10 @@ contract PredictionMarketFactory {
         );
         marketAddress = address(market);
 
-        // ----- Seed initial balanced liquidity -----
-        if (initialLiquidity > 0) {
-            // Split evenly between YES and NO to start at ~50/50 probability
-            uint halfLiquidity = initialLiquidity / 2;
-
-            // Approve the market to pull USDC from this factory
-            COLLATERAL_TOKEN.approve(marketAddress, initialLiquidity);
-
-            // Buy YES shares (factory holds them — they serve as liquidity, not profit)
-            if (halfLiquidity > 0) {
-                market.buyYes(halfLiquidity);
-            }
-
-            // Buy NO shares with remaining amount
-            uint remainingLiquidity = initialLiquidity - halfLiquidity;
-            if (remainingLiquidity > 0) {
-                market.buyNo(remainingLiquidity);
-            }
-        }
-
-        // ----- Store market info -----
+        // ----- Store market info BEFORE external calls (CEI pattern) -----
         uint id = marketCount;
         MarketInfo memory info = MarketInfo({
+            marketId: id,
             market: marketAddress,
             creator: msg.sender,
             metadataURI: _metadataUri,
@@ -157,6 +142,36 @@ contract PredictionMarketFactory {
         marketInfoByAddress[marketAddress] = info;
         allMarkets.push(marketAddress);
         marketCount = id + 1;
+
+        // ----- Seed initial balanced liquidity -----
+        if (initialLiquidity > 0) {
+            // Split evenly between YES and NO to start at ~50/50 probability
+            uint halfLiquidity = initialLiquidity / 2;
+
+            // Approve the market to pull USDC from this factory
+            COLLATERAL_TOKEN.approve(marketAddress, initialLiquidity);
+
+            // Buy YES shares
+            if (halfLiquidity > 0) {
+                market.buyYes(halfLiquidity);
+            }
+
+            // Buy NO shares with remaining amount
+            uint remainingLiquidity = initialLiquidity - halfLiquidity;
+            if (remainingLiquidity > 0) {
+                market.buyNo(remainingLiquidity);
+            }
+
+            // Transfer liquidity shares to the market creator
+            uint factoryYes = market.userYes(address(this));
+            uint factoryNo = market.userNo(address(this));
+            if (factoryYes > 0) {
+                market.transferYesShares(msg.sender, factoryYes);
+            }
+            if (factoryNo > 0) {
+                market.transferNoShares(msg.sender, factoryNo);
+            }
+        }
 
         emit MarketCreated(
             id,
@@ -184,13 +199,8 @@ contract PredictionMarketFactory {
 
         info.metadataURI = _newUri;
 
-        // Also update the id-based mapping
-        for (uint i = 0; i < marketCount; i++) {
-            if (markets[i].market == _market) {
-                markets[i].metadataURI = _newUri;
-                break;
-            }
-        }
+        // Direct update via stored marketId (no loop needed)
+        markets[info.marketId].metadataURI = _newUri;
 
         emit MetadataUpdated(_market, _newUri);
     }
@@ -230,6 +240,7 @@ contract PredictionMarketFactory {
 
     /// @notice Update the creation fee.
     function setCreationFee(uint _newFee) external onlyOwner {
+        require(_newFee <= MAX_CREATION_FEE, "Fee exceeds max");
         require(_newFee >= initialLiquidity, "Fee < liquidity");
         uint oldFee = creationFee;
         creationFee = _newFee;

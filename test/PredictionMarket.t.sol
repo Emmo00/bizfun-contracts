@@ -42,6 +42,7 @@ contract MockUSDC {
 
 contract PredictionMarketTest is Test {
     MockUSDC usdc;
+    PredictionMarket implementation;
     PredictionMarketFactory factory;
 
     address owner = address(this);
@@ -58,8 +59,10 @@ contract PredictionMarketTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
+        implementation = new PredictionMarket();
         factory = new PredictionMarketFactory(
             address(usdc),
+            address(implementation),
             CREATION_FEE,
             INITIAL_LIQUIDITY
         );
@@ -83,12 +86,12 @@ contract PredictionMarketTest is Test {
 
     function test_factoryConstructor_rejectsZeroToken() public {
         vm.expectRevert("Invalid token");
-        new PredictionMarketFactory(address(0), CREATION_FEE, INITIAL_LIQUIDITY);
+        new PredictionMarketFactory(address(0), address(implementation), CREATION_FEE, INITIAL_LIQUIDITY);
     }
 
     function test_factoryConstructor_rejectsLiquidityGreaterThanFee() public {
         vm.expectRevert("Liquidity > fee");
-        new PredictionMarketFactory(address(usdc), 5e6, 10e6);
+        new PredictionMarketFactory(address(usdc), address(implementation), 5e6, 10e6);
     }
 
     // ================================================================
@@ -163,7 +166,7 @@ contract PredictionMarketTest is Test {
     function test_createMarket_setsCreatorOnMarket() public {
         address market = _createMarket(alice);
         PredictionMarket pm = PredictionMarket(market);
-        assertEq(pm.CREATOR(), alice);
+        assertEq(pm.creator(), alice);
     }
 
     function test_createMarket_rejectsZeroOracle() public {
@@ -683,7 +686,7 @@ contract PredictionMarketTest is Test {
 
     function test_factoryConstructor_rejectsAboveMaxFee() public {
         vm.expectRevert("Fee exceeds max");
-        new PredictionMarketFactory(address(usdc), 2000e6, 100e6);
+        new PredictionMarketFactory(address(usdc), address(implementation), 2000e6, 100e6);
     }
 
     // ================================================================

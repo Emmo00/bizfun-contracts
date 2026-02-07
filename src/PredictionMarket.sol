@@ -20,13 +20,14 @@ contract PredictionMarket {
 
     // ---------------- STATE ----------------
 
-    IERC20 public immutable COLLATERAL_TOKEN; // USDC
-    address public immutable ORACLE;
-    address public immutable CREATOR;
-    uint public immutable TRADING_DEADLINE;
-    uint public immutable RESOLVE_TIME;
-    uint public immutable B; // liquidity parameter (scaled)
+    IERC20 public collateralToken; // USDC
+    address public oracle;
+    address public creator;
+    uint public tradingDeadline;
+    uint public resolveTime;
+    uint public b; // liquidity parameter (scaled)
 
+    bool public initialized;
     MarketState public marketState;
     uint8 public resolvedOutcome; // 1 = YES, 2 = NO
     bool public paused;
@@ -39,20 +40,25 @@ contract PredictionMarket {
 
     uint private constant ONE = 1e18; // fixed point scale
 
-    constructor(
+    /// @notice Initialize the market (used by clones instead of a constructor).
+    ///         Can only be called once.
+    function initialize(
         address _collateral,
         address _oracle,
         address _creator,
         uint _tradingDeadline,
         uint _resolveTime,
         uint _b
-    ) {
-        COLLATERAL_TOKEN = IERC20(_collateral);
-        ORACLE = _oracle;
-        CREATOR = _creator;
-        TRADING_DEADLINE = _tradingDeadline;
-        RESOLVE_TIME = _resolveTime;
-        B = _b;
+    ) external {
+        require(!initialized, "Already initialized");
+        initialized = true;
+
+        collateralToken = IERC20(_collateral);
+        oracle = _oracle;
+        creator = _creator;
+        tradingDeadline = _tradingDeadline;
+        resolveTime = _resolveTime;
+        b = _b;
         marketState = MarketState.OPEN;
     }
 
@@ -67,13 +73,13 @@ contract PredictionMarket {
     }
 
     function _onlyOracle() internal view {
-        require(msg.sender == ORACLE, "Not oracle");
+        require(msg.sender == oracle, "Not oracle");
     }
 
     function _onlyOpen() internal view {
         require(!paused, "Market paused");
         require(marketState == MarketState.OPEN, "Market not open");
-        require(block.timestamp < TRADING_DEADLINE, "Trading ended");
+        require(block.timestamp < tradingDeadline, "Trading ended");
     }
 
     // ---------------- LMSR MATH (PRBMath SD59x18) ----------------
@@ -85,7 +91,7 @@ contract PredictionMarket {
     ///      Since one of the exp terms is always exp(0) = 1, the ln argument is always >= 1.
     function _cost(uint qYes, uint qNo) internal view returns (uint) {
         // forge-lint: disable-next-line(unsafe-typecast)
-        SD59x18 bFixed = sd(int256(B));
+        SD59x18 bFixed = sd(int256(b));
         // forge-lint: disable-next-line(unsafe-typecast)
         SD59x18 a = sd(int256(qYes)).div(bFixed);
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -127,7 +133,7 @@ contract PredictionMarket {
         yesShares += amountShares;
         userYes[msg.sender] += amountShares;
 
-        require(COLLATERAL_TOKEN.transferFrom(msg.sender, address(this), payment), "Transfer failed");
+        require(collateralToken.transferFrom(msg.sender, address(this), payment), "Transfer failed");
 
         emit SharesBought(msg.sender, true, amountShares, payment);
     }
@@ -140,7 +146,7 @@ contract PredictionMarket {
         noShares += amountShares;
         userNo[msg.sender] += amountShares;
 
-        require(COLLATERAL_TOKEN.transferFrom(msg.sender, address(this), payment), "Transfer failed");
+        require(collateralToken.transferFrom(msg.sender, address(this), payment), "Transfer failed");
 
         emit SharesBought(msg.sender, false, amountShares, payment);
     }
@@ -155,7 +161,7 @@ contract PredictionMarket {
         yesShares -= amountShares;
         userYes[msg.sender] -= amountShares;
 
-        require(COLLATERAL_TOKEN.transfer(msg.sender, refund), "Refund failed");
+        require(collateralToken.transfer(msg.sender, refund), "Refund failed");
 
         emit SharesSold(msg.sender, true, amountShares, refund);
     }
@@ -170,7 +176,7 @@ contract PredictionMarket {
         noShares -= amountShares;
         userNo[msg.sender] -= amountShares;
 
-        require(COLLATERAL_TOKEN.transfer(msg.sender, refund), "Refund failed");
+        require(collateralToken.transfer(msg.sender, refund), "Refund failed");
 
         emit SharesSold(msg.sender, false, amountShares, refund);
     }
@@ -178,7 +184,7 @@ contract PredictionMarket {
     // ---------------- LIFECYCLE ----------------
 
     function closeMarket() external {
-        require(block.timestamp >= TRADING_DEADLINE, "Too early");
+        require(block.timestamp >= tradingDeadline, "Too early");
         require(marketState == MarketState.OPEN, "Already closed");
         marketState = MarketState.CLOSED;
 
@@ -186,7 +192,7 @@ contract PredictionMarket {
     }
 
     function resolve(uint8 outcome) external onlyOracle {
-        require(block.timestamp >= RESOLVE_TIME, "Too early");
+        require(block.timestamp >= resolveTime, "Too early");
         require(marketState != MarketState.RESOLVED, "Already resolved");
         require(outcome == 1 || outcome == 2, "Invalid outcome");
 
@@ -217,7 +223,7 @@ contract PredictionMarket {
         }
 
         require(payout > 0, "Nothing to redeem");
-        require(COLLATERAL_TOKEN.transfer(msg.sender, payout), "Transfer failed");
+        require(collateralToken.transfer(msg.sender, payout), "Transfer failed");
 
         emit Redeemed(msg.sender, payout);
     }

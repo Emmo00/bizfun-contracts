@@ -3,10 +3,13 @@ pragma solidity ^0.8.20;
 
 import {IERC20} from "./interfaces/IERC20.sol";
 import {PredictionMarket} from "./PredictionMarket.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 /// @title PredictionMarketFactory
 /// @notice Factory contract for deploying BizFun prediction markets.
-///         Collects a creation fee in USDC, deploys a new PredictionMarket,
+///         Uses EIP-1167 minimal proxies (clones) to keep deployment costs low
+///         and factory bytecode well under the 24 KB EVM limit.
+///         Collects a creation fee in USDC, deploys a new PredictionMarket clone,
 ///         seeds initial liquidity, and stores off-chain metadata URIs.
 contract PredictionMarketFactory {
     // ---------------- STRUCTS ----------------
@@ -42,6 +45,7 @@ contract PredictionMarketFactory {
     // ---------------- STATE ----------------
 
     IERC20 public immutable COLLATERAL_TOKEN; // USDC (single global token)
+    address public immutable IMPLEMENTATION;   // PredictionMarket logic contract
 
     uint public constant MAX_CREATION_FEE = 1000e6; // $1000 USDC cap
 
@@ -68,18 +72,22 @@ contract PredictionMarketFactory {
     // ---------------- CONSTRUCTOR ----------------
 
     /// @param _collateralToken  Address of the USDC token contract.
+    /// @param _implementation   Address of the deployed PredictionMarket logic contract (used as clone template).
     /// @param _creationFee      Total fee in USDC (e.g. 10e6 for $10 USDC).
     /// @param _initialLiquidity Portion of fee forwarded to seed the market (must be <= _creationFee).
     constructor(
         address _collateralToken,
+        address _implementation,
         uint _creationFee,
         uint _initialLiquidity
     ) {
         require(_collateralToken != address(0), "Invalid token");
+        require(_implementation != address(0), "Invalid implementation");
         require(_creationFee <= MAX_CREATION_FEE, "Fee exceeds max");
         require(_initialLiquidity <= _creationFee, "Liquidity > fee");
 
         COLLATERAL_TOKEN = IERC20(_collateralToken);
+        IMPLEMENTATION = _implementation;
         owner = msg.sender;
         creationFee = _creationFee;
         initialLiquidity = _initialLiquidity;
@@ -103,7 +111,7 @@ contract PredictionMarketFactory {
         uint _resolveTime,
         uint _b,
         string calldata _metadataUri
-    ) external returns (address marketAddress) {
+    ) external returns (address) {
         require(_oracle != address(0), "Invalid oracle");
         require(_tradingDeadline > block.timestamp, "Deadline in past");
         require(_resolveTime >= _tradingDeadline, "Resolve before deadline");
@@ -118,8 +126,10 @@ contract PredictionMarketFactory {
             );
         }
 
-        // ----- Deploy new PredictionMarket -----
-        PredictionMarket market = new PredictionMarket(
+        // ----- Deploy new PredictionMarket clone (EIP-1167 minimal proxy) -----
+        address marketAddress = Clones.clone(IMPLEMENTATION);
+        PredictionMarket market = PredictionMarket(marketAddress);
+        market.initialize(
             address(COLLATERAL_TOKEN),
             _oracle,
             msg.sender,        // creator
@@ -127,7 +137,6 @@ contract PredictionMarketFactory {
             _resolveTime,
             _b
         );
-        marketAddress = address(market);
 
         // ----- Store market info BEFORE external calls (CEI pattern) -----
         uint id = marketCount;
@@ -184,6 +193,8 @@ contract PredictionMarketFactory {
             initialLiquidity,
             _metadataUri
         );
+
+        return marketAddress;
     }
 
     // ---------------- METADATA ----------------

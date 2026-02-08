@@ -156,40 +156,20 @@ contract PredictionMarketFactory {
 
         // ----- Seed initial balanced liquidity -----
         if (initialLiquidity > 0) {
-            // We want to deposit exactly `initialLiquidity` USDC into the market.
-            //
-            // LMSR property: when buying q YES *and* q NO from an empty market,
-            // the total cost is:
-            //   C(q, q) - C(0, 0) = b*(q/b + ln2) - b*ln2 = q
-            // So the total cost in collateral = q / collateralScale.
-            //
-            // To spend exactly `initialLiquidity` USDC, we need:
-            //   q = initialLiquidity * collateralScale
-            //
-            // However, sequential buying (YES first, then NO) splits this cost
-            // unevenly between the two calls. We handle this by approving the
-            // full initialLiquidity and letting the LMSR math pull the correct
-            // amounts in each step. The total across both buys equals
-            // initialLiquidity because C(q,q) - C(0,0) = q.
+            // Transfer USDC directly into the market contract.
+            require(
+                COLLATERAL_TOKEN.transfer(marketAddress, initialLiquidity),
+                "Liquidity transfer failed"
+            );
+
+            // Record equal YES and NO shares under the creator.
+            // LMSR identity: C(q, q) - C(0, 0) = q, so sharesPerSide = initialLiquidity * collateralScale
+            // gives a total cost of exactly initialLiquidity USDC.
+            // By using seedShares we skip the buy path entirely — no rounding, no
+            // sequential-cost asymmetry.
             uint collateralScaleFactor = 10 ** (18 - COLLATERAL_DECIMALS);
             uint sharesPerSide = initialLiquidity * collateralScaleFactor;
-
-            // Approve the market to pull USDC from this factory
-            COLLATERAL_TOKEN.approve(marketAddress, initialLiquidity);
-
-            // Buy YES shares then NO shares — total cost = sharesPerSide / collateralScale = initialLiquidity
-            market.buyYes(sharesPerSide);
-            market.buyNo(sharesPerSide);
-
-            // Transfer liquidity shares to the market creator
-            uint factoryYes = market.userYes(address(this));
-            uint factoryNo = market.userNo(address(this));
-            if (factoryYes > 0) {
-                market.transferYesShares(msg.sender, factoryYes);
-            }
-            if (factoryNo > 0) {
-                market.transferNoShares(msg.sender, factoryNo);
-            }
+            market.seedShares(msg.sender, sharesPerSide, sharesPerSide);
         }
 
         emit MarketCreated(

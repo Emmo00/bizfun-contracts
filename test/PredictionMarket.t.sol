@@ -398,22 +398,19 @@ contract PredictionMarketTest is Test {
         vm.prank(oracle);
         pm.resolve(1);
 
-        // Mint enough USDC into the market so it can pay out.
-        // In a real system the LMSR guarantees solvency; here the demo
-        // math is approximate, so we top-up the market balance to cover
-        // the payout (shares == 5e18).
+        // Bob redeems — pro-rata share of contract balance
         uint marketBal = usdc.balanceOf(market);
-        if (marketBal < shares) {
-            usdc.mint(market, shares - marketBal);
-        }
+        uint bobShares = pm.userYes(bob);
+        uint totalYes = pm.yesShares();
+        uint expectedPayout = (marketBal * bobShares) / totalYes;
 
-        // Bob redeems
         uint balBefore = usdc.balanceOf(bob);
         vm.prank(bob);
         pm.redeem();
         uint balAfter = usdc.balanceOf(bob);
 
-        assertTrue(balAfter > balBefore, "Should have received payout");
+        assertEq(balAfter - balBefore, expectedPayout, "Bob should get pro-rata payout");
+        assertTrue(expectedPayout > 0, "Payout should be > 0");
         assertEq(pm.userYes(bob), 0);
     }
 
@@ -709,19 +706,91 @@ contract PredictionMarketTest is Test {
     function test_createMarket_seedsFullInitialLiquidity() public {
         address market = _createMarket(alice);
 
-        // The market contract should hold approximately INITIAL_LIQUIDITY of USDC.
-        // Integer division when converting LMSR output (1e18) to USDC (1e6) can
-        // cause up to 1 wei of truncation per buy call, so we allow a tolerance of 2.
+        // The market contract should hold exactly INITIAL_LIQUIDITY of USDC.
+        // seedShares transfers USDC directly — no rounding.
         uint marketBalance = usdc.balanceOf(market);
-        assertApproxEqAbs(marketBalance, INITIAL_LIQUIDITY, 2, "Market should hold ~full initial liquidity");
+        assertEq(marketBalance, INITIAL_LIQUIDITY, "Market should hold full initial liquidity");
 
-        // The factory should retain the rest of the creation fee
+        // The factory should retain exactly (CREATION_FEE - INITIAL_LIQUIDITY)
         uint factoryBalance = usdc.balanceOf(address(factory));
-        assertApproxEqAbs(
+        assertEq(
             factoryBalance,
             CREATION_FEE - INITIAL_LIQUIDITY,
-            2,
             "Factory should retain fee minus liquidity"
         );
+    }
+
+    // ================================================================
+    //             PRO-RATA REDEMPTION SOLVENCY TESTS
+    // ================================================================
+
+    function test_redeem_proRata_alwaysSolvent() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // Bob buys a large YES position
+        uint bobShares = 10e18;
+        uint bobCost = pm.quoteBuyYes(bobShares);
+        usdc.mint(bob, bobCost);
+        vm.startPrank(bob);
+        usdc.approve(market, bobCost);
+        pm.buyYes(bobShares);
+        vm.stopPrank();
+
+        // Warp and resolve — YES wins
+        vm.warp(block.timestamp + 9 days);
+        vm.prank(oracle);
+        pm.resolve(1);
+
+        uint marketBalBefore = usdc.balanceOf(market);
+
+        // Snapshot balances before redemptions
+        uint aliceBalBefore = usdc.balanceOf(alice);
+        uint bobBalBefore = usdc.balanceOf(bob);
+
+        // Alice redeems first (she has seeded shares)
+        uint aliceYes = pm.userYes(alice);
+        assertTrue(aliceYes > 0, "Alice should have YES shares");
+        vm.prank(alice);
+        pm.redeem();
+
+        // Bob redeems second
+        vm.prank(bob);
+        pm.redeem();
+
+        // Market should be fully drained (within rounding)
+        uint marketBalAfter = usdc.balanceOf(market);
+        assertLe(marketBalAfter, 1, "Market should be ~empty after all redemptions");
+
+        // Total paid out should equal the market balance before redemptions
+        uint alicePayout = usdc.balanceOf(alice) - aliceBalBefore;
+        uint bobPayout = usdc.balanceOf(bob) - bobBalBefore;
+        assertApproxEqAbs(
+            alicePayout + bobPayout,
+            marketBalBefore,
+            1,
+            "Total payouts should equal contract balance"
+        );
+    }
+
+    function test_redeem_proRata_creatorGetsShare() public {
+        address market = _createMarket(alice);
+        PredictionMarket pm = PredictionMarket(market);
+
+        // No additional traders — only creator's seeded shares
+        // Warp and resolve — YES wins
+        vm.warp(block.timestamp + 9 days);
+        vm.prank(oracle);
+        pm.resolve(1);
+
+        // Alice redeems — she should get the full contract balance
+        uint marketBal = usdc.balanceOf(market);
+        assertTrue(marketBal > 0, "Market should have USDC");
+
+        vm.prank(alice);
+        pm.redeem();
+
+        assertEq(usdc.balanceOf(market), 0, "Market should be empty");
+        assertEq(pm.userYes(alice), 0);
     }
 }

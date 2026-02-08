@@ -23,6 +23,7 @@ contract PredictionMarket {
     IERC20 public collateralToken; // USDC
     address public oracle;
     address public creator;
+    address public factory;
     uint public tradingDeadline;
     uint public resolveTime;
     uint public b; // liquidity parameter (scaled)
@@ -58,6 +59,7 @@ contract PredictionMarket {
         collateralToken = IERC20(_collateral);
         oracle = _oracle;
         creator = _creator;
+        factory = msg.sender;
         tradingDeadline = _tradingDeadline;
         resolveTime = _resolveTime;
         b = _b;
@@ -218,26 +220,56 @@ contract PredictionMarket {
 
     // ---------------- REDEMPTION ----------------
 
+    /// @notice Redeem winning shares for a pro-rata share of the market's USDC balance.
+    ///         payout = contractBalance * (userShares / totalWinningShares)
+    ///         This guarantees the market is always solvent — payouts are
+    ///         distributed proportionally from whatever USDC the pool collected.
     function redeem() external {
         require(marketState == MarketState.RESOLVED, "Not resolved");
 
-        uint shares;
+        uint userShares;
+        uint totalWinningShares;
         if (resolvedOutcome == 1) {
-            shares = userYes[msg.sender];
+            userShares = userYes[msg.sender];
+            totalWinningShares = yesShares;
             userYes[msg.sender] = 0;
+            yesShares -= userShares;
         } else {
-            shares = userNo[msg.sender];
+            userShares = userNo[msg.sender];
+            totalWinningShares = noShares;
             userNo[msg.sender] = 0;
+            noShares -= userShares;
         }
 
-        require(shares > 0, "Nothing to redeem");
+        require(userShares > 0, "Nothing to redeem");
+        require(totalWinningShares > 0, "No winning shares");
 
-        // Convert shares (1e18 scale) to collateral units (e.g. 1e6 for USDC)
-        uint payout = shares / collateralScale;
+        // Pro-rata share of the contract's entire USDC balance
+        uint contractBalance = collateralToken.balanceOf(address(this));
+        uint payout = (contractBalance * userShares) / totalWinningShares;
+
         require(payout > 0, "Payout rounds to zero");
         require(collateralToken.transfer(msg.sender, payout), "Transfer failed");
 
         emit Redeemed(msg.sender, payout);
+    }
+
+    // ---------------- SEED (FACTORY ONLY) ----------------
+
+    /// @notice Seed initial shares to the market creator without a USDC pull.
+    ///         The factory sends USDC directly to this contract, then calls
+    ///         seedShares to record the share balances.  This avoids the
+    ///         sequential-buy rounding issues and guarantees the full
+    ///         initialLiquidity ends up in the market.
+    /// @dev    Only callable by the factory, only while OPEN.
+    function seedShares(address _recipient, uint _yesAmount, uint _noAmount) external {
+        require(msg.sender == factory, "Only factory");
+        require(marketState == MarketState.OPEN, "Market not open");
+
+        yesShares += _yesAmount;
+        noShares  += _noAmount;
+        userYes[_recipient] += _yesAmount;
+        userNo[_recipient]  += _noAmount;
     }
 
     // ---------------- SHARE TRANSFERS ----------------

@@ -11,8 +11,8 @@
 | Contract                              | Address                                      | Notes                                             |
 | ------------------------------------- | -------------------------------------------- | ------------------------------------------------- |
 | **MockUSDC**                          | `0x0d0ec10cc2eaeb6dbc9127fb98c9ebbfc029b8c9` | ERC-20, 6 decimals, has `faucet()`                |
-| **PredictionMarket (implementation)** | `0x6438ef1eb2162a3f8e1d03674ba841bd16748d96` | Do NOT interact directly — clone template only    |
-| **PredictionMarketFactory**           | `0xc2271d03612cdae45be35709193ac3dfc51dac03` | Entry point for creating and discovering markets  |
+| **PredictionMarket (implementation)** | `0x19081022d8e7CC03d103295c7088655af6A9011E` | Do NOT interact directly — clone template only    |
+| **PredictionMarketFactory**           | `0xb65f0ef1256a1d9c2b04a59f83dbd35b6c6675e3` | Entry point for creating and discovering markets  |
 
 > **Collateral token:** USDC (6 decimals). On testnet the MockUSDC above is used. Call `faucet()` on MockUSDC to mint 1,000 USDC to your address for free.
 
@@ -135,9 +135,9 @@ factory.createMarket(
 **What happens internally:**
 - Factory pulls `creationFee` USDC from caller
 - Deploys an EIP-1167 clone of the PredictionMarket implementation
-- Calls `initialize(...)` on the clone (including `COLLATERAL_DECIMALS = 6` so the market can convert LMSR outputs to USDC amounts)
-- Seeds balanced liquidity: computes `sharesPerSide = initialLiquidity * collateralScale` (i.e. `5e6 * 1e12 = 5e18` shares), then buys that many YES shares and that many NO shares. Due to the LMSR property $C(q, q) - C(0, 0) = q$, the total USDC cost of balanced seeding equals `sharesPerSide / collateralScale = initialLiquidity` ($5).
-- Transfers those liquidity shares to the caller (market creator)
+- Calls `initialize(...)` on the clone (including `COLLATERAL_DECIMALS = 6` so the market can convert LMSR outputs to USDC amounts). The clone records `factory = msg.sender` during initialization.
+- Seeds balanced liquidity via **direct transfer + `seedShares`**: transfers `initialLiquidity` USDC directly into the market contract, then calls `market.seedShares(msg.sender, sharesPerSide, sharesPerSide)` where `sharesPerSide = initialLiquidity * collateralScale` (i.e. `5e6 * 1e12 = 5e18`). This records equal YES and NO shares under the creator **without** going through the buy path — avoiding sequential-cost rounding and guaranteeing the full `initialLiquidity` ends up in the market.
+- By the LMSR identity $C(q, q) - C(0, 0) = q$, balanced shares of `sharesPerSide` in 1e18 scale map to exactly `initialLiquidity` in collateral.
 - Stores market info and emits `MarketCreated` event
 - Returns the new market's address
 
@@ -307,12 +307,15 @@ market.redeem()
 ```
 
 - Callable after market is `RESOLVED`.
-- If `resolvedOutcome == 1` (YES won): payout = caller's YES share balance / `collateralScale`.
-- If `resolvedOutcome == 2` (NO won): payout = caller's NO share balance / `collateralScale`.
-- Zeroes the caller's winning share balance and transfers the USDC payout.
+- Uses **pro-rata distribution**: payout is proportional to the caller's share of all outstanding winning shares.
+- Formula: `payout = contractBalance * userShares / totalWinningShares`
+  - `contractBalance` = market contract's current USDC balance
+  - `userShares` = caller's YES shares (if YES won) or NO shares (if NO won)
+  - `totalWinningShares` = total outstanding YES shares (if YES won) or total outstanding NO shares (if NO won)
+- The caller's winning shares are zeroed out, and `yesShares`/`noShares` is decremented by the redeemed amount. This keeps the denominator consistent for sequential redemptions.
 - Emits `Redeemed(address user, uint payout)`.
 
-> **Important:** Shares are in 1e18 scale but payouts are converted to collateral units (e.g. USDC 6 decimals) by dividing by `collateralScale` (1e12 for USDC). The LMSR math ensures the market contract holds enough USDC to pay all winners.
+> **Important:** Pro-rata redemption ensures the market is always **solvent** — total payouts never exceed the contract's USDC balance. When the last winner redeems, the contract is fully drained. This replaces the old fixed `$1/share` model which could leave the market insolvent since LMSR charges less than $1/share on average.
 
 ---
 
@@ -399,7 +402,8 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 | `sellNo` | `sellNo(uint amountShares)` | External | Sell NO shares back. Requires OPEN, not paused, before deadline. Sends USDC refund. |
 | `closeMarket` | `closeMarket()` | External, anyone | Close market after `tradingDeadline`. Sets state to CLOSED. |
 | `resolve` | `resolve(uint8 outcome)` | External, oracle only | Resolve market after `resolveTime`. Outcome: `1`=YES, `2`=NO. Auto-closes if still OPEN. |
-| `redeem` | `redeem()` | External | Claim USDC payout after resolution. Converts winning shares (1e18) to collateral units via `/ collateralScale`. Winners only. |
+| `redeem` | `redeem()` | External | Claim USDC payout after resolution. Uses pro-rata distribution: `payout = contractBalance * userShares / totalWinningShares`. Decrements winning share totals for sequential redemption consistency. Winners only. |
+| `seedShares` | `seedShares(address _recipient, uint _yesAmount, uint _noAmount)` | External, factory only | Record initial YES/NO shares under `_recipient` without pulling USDC. Factory sends USDC directly to market, then calls this. Only callable while OPEN. |
 | `transferYesShares` | `transferYesShares(address _to, uint _amount)` | External | Transfer YES shares to another address. |
 | `transferNoShares` | `transferNoShares(address _to, uint _amount)` | External | Transfer NO shares to another address. |
 | `pause` | `pause()` | External, oracle only | Pause all trading. |
@@ -412,6 +416,7 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 | `collateralToken()` | `address` | USDC token address |
 | `oracle()` | `address` | Oracle authorized to resolve |
 | `creator()` | `address` | Market creator address |
+| `factory()` | `address` | Factory contract that deployed this clone |
 | `tradingDeadline()` | `uint` | Unix timestamp — trading stops |
 | `resolveTime()` | `uint` | Unix timestamp — resolution allowed |
 | `b()` | `uint` | LMSR liquidity parameter (1e18 scale) |
@@ -571,7 +576,8 @@ market.userNo(myAddress)    → my NO share balance
 
 ```
 1. market.resolvedOutcome()  → 1 (YES won) or 2 (NO won)
-2. market.redeem()           → receive USDC payout
+2. market.redeem()           → receive pro-rata USDC payout
+   // payout = contractBalance * yourShares / totalWinningShares
 ```
 
 ### Discover all markets
@@ -594,6 +600,9 @@ market.userNo(myAddress)    → my NO share balance
 | `b` parameter  | 18 decimals (1e18) | `1000000000000000000` = 1.0                |
 | `collateralScale` | unitless        | `1000000000000` (1e12) for USDC            |
 | LMSR cost output | 18 decimals     | Divided by `collateralScale` → USDC amount |
+| Redemption payout | 6 decimals (USDC) | Pro-rata: `contractBalance * userShares / totalWinningShares` |
 | Timestamps     | Unix seconds       | `1738972800` = Feb 8 2025 00:00:00 UTC     |
 
 > **Critical:** Share amounts and the `b` parameter MUST be in the same 1e18 scale. The LMSR cost function outputs values in 1e18, which are then divided by `collateralScale` (1e12 for USDC) to produce the actual USDC payment/refund. Passing share amounts in the wrong scale (e.g. raw `50` instead of `50e18`) will cause arithmetic underflow errors.
+
+> **Solvency:** Redemption uses pro-rata distribution from the contract's actual USDC balance, so the market is always solvent. Total payouts across all winners = total contract balance. The last redeemer drains the contract fully (within 1 wei of rounding).

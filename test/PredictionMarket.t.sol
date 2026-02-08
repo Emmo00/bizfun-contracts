@@ -11,26 +11,26 @@ contract MockUSDC {
     string public symbol = "USDC";
     uint8 public decimals = 6;
 
-    mapping(address => uint) public balanceOf;
-    mapping(address => mapping(address => uint)) public allowance;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
 
-    function mint(address to, uint amount) external {
+    function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
     }
 
-    function approve(address spender, uint amount) external returns (bool) {
+    function approve(address spender, uint256 amount) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
 
-    function transfer(address to, uint amount) external returns (bool) {
+    function transfer(address to, uint256 amount) external returns (bool) {
         require(balanceOf[msg.sender] >= amount, "Insufficient balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
 
-    function transferFrom(address from, address to, uint amount) external returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
         allowance[from][msg.sender] -= amount;
@@ -50,9 +50,9 @@ contract PredictionMarketTest is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
-    uint constant CREATION_FEE = 10e6;       // $10 USDC
-    uint constant INITIAL_LIQUIDITY = 5e6;   // $5 seeded
-    uint constant LIQUIDITY_B = 1e18;        // LMSR b parameter
+    uint256 constant CREATION_FEE = 10e6; // $10 USDC
+    uint256 constant INITIAL_LIQUIDITY = 5e6; // $5 seeded
+    uint256 constant LIQUIDITY_B = 1e18; // LMSR b parameter
 
     string constant META_URI = "ipfs://QmTestMetadataHash123";
     string constant META_URI_2 = "ipfs://QmUpdatedMetadataHash456";
@@ -60,12 +60,7 @@ contract PredictionMarketTest is Test {
     function setUp() public {
         usdc = new MockUSDC();
         implementation = new PredictionMarket();
-        factory = new PredictionMarketFactory(
-            address(usdc),
-            address(implementation),
-            CREATION_FEE,
-            INITIAL_LIQUIDITY
-        );
+        factory = new PredictionMarketFactory(address(usdc), address(implementation), CREATION_FEE, INITIAL_LIQUIDITY);
 
         // Fund accounts
         usdc.mint(alice, 1000e6);
@@ -99,18 +94,12 @@ contract PredictionMarketTest is Test {
     // ================================================================
 
     function _createMarket(address creator) internal returns (address) {
-        uint deadline = block.timestamp + 7 days;
-        uint resolveTime = deadline + 1 days;
+        uint256 deadline = block.timestamp + 7 days;
+        uint256 resolveTime = deadline + 1 days;
 
         vm.startPrank(creator);
         usdc.approve(address(factory), CREATION_FEE);
-        address market = factory.createMarket(
-            oracle,
-            deadline,
-            resolveTime,
-            LIQUIDITY_B,
-            META_URI
-        );
+        address market = factory.createMarket(oracle, deadline, resolveTime, LIQUIDITY_B, META_URI);
         vm.stopPrank();
         return market;
     }
@@ -131,8 +120,8 @@ contract PredictionMarketTest is Test {
     }
 
     function test_createMarket_emitsEvent() public {
-        uint deadline = block.timestamp + 7 days;
-        uint resolveTime = deadline + 1 days;
+        uint256 deadline = block.timestamp + 7 days;
+        uint256 resolveTime = deadline + 1 days;
 
         vm.startPrank(alice);
         usdc.approve(address(factory), CREATION_FEE);
@@ -146,9 +135,9 @@ contract PredictionMarketTest is Test {
     }
 
     function test_createMarket_collectsFee() public {
-        uint balanceBefore = usdc.balanceOf(alice);
+        uint256 balanceBefore = usdc.balanceOf(alice);
         _createMarket(alice);
-        uint balanceAfter = usdc.balanceOf(alice);
+        uint256 balanceAfter = usdc.balanceOf(alice);
 
         // Alice paid the full creation fee
         assertEq(balanceBefore - balanceAfter, CREATION_FEE);
@@ -276,8 +265,8 @@ contract PredictionMarketTest is Test {
         address market = _createMarket(alice);
         PredictionMarket pm = PredictionMarket(market);
 
-        uint shares = 1e18;
-        uint cost = pm.quoteBuyYes(shares);
+        uint256 shares = 1e18;
+        uint256 cost = pm.quoteBuyYes(shares);
 
         usdc.mint(bob, cost);
         vm.startPrank(bob);
@@ -292,8 +281,8 @@ contract PredictionMarketTest is Test {
         address market = _createMarket(alice);
         PredictionMarket pm = PredictionMarket(market);
 
-        uint shares = 1e18;
-        uint cost = pm.quoteBuyNo(shares);
+        uint256 shares = 1e18;
+        uint256 cost = pm.quoteBuyNo(shares);
 
         usdc.mint(bob, cost);
         vm.startPrank(bob);
@@ -308,8 +297,8 @@ contract PredictionMarketTest is Test {
         address market = _createMarket(alice);
         PredictionMarket pm = PredictionMarket(market);
 
-        uint shares = 5e18; // large enough for LMSR to produce non-zero cost
-        uint cost = pm.quoteBuyYes(shares);
+        uint256 shares = 5e18; // large enough for LMSR to produce non-zero cost
+        uint256 cost = pm.quoteBuyYes(shares);
 
         // Fund bob sufficiently and buy
         usdc.mint(bob, cost);
@@ -318,9 +307,9 @@ contract PredictionMarketTest is Test {
         pm.buyYes(shares);
 
         // Then sell
-        uint balBefore = usdc.balanceOf(bob);
+        uint256 balBefore = usdc.balanceOf(bob);
         pm.sellYes(shares);
-        uint balAfter = usdc.balanceOf(bob);
+        uint256 balAfter = usdc.balanceOf(bob);
         vm.stopPrank();
 
         assertEq(pm.userYes(bob), 0);
@@ -352,7 +341,7 @@ contract PredictionMarketTest is Test {
         vm.warp(block.timestamp + 8 days); // past deadline
         pm.closeMarket();
 
-        assertEq(uint(pm.marketState()), uint(PredictionMarket.MarketState.CLOSED));
+        assertEq(uint256(pm.marketState()), uint256(PredictionMarket.MarketState.CLOSED));
     }
 
     function test_resolveMarket() public {
@@ -365,7 +354,7 @@ contract PredictionMarketTest is Test {
         vm.prank(oracle);
         pm.resolve(1); // YES wins
 
-        assertEq(uint(pm.marketState()), uint(PredictionMarket.MarketState.RESOLVED));
+        assertEq(uint256(pm.marketState()), uint256(PredictionMarket.MarketState.RESOLVED));
         assertEq(pm.resolvedOutcome(), 1);
     }
 
@@ -385,8 +374,8 @@ contract PredictionMarketTest is Test {
         PredictionMarket pm = PredictionMarket(market);
 
         // Bob buys YES shares
-        uint shares = 5e18;
-        uint cost = pm.quoteBuyYes(shares);
+        uint256 shares = 5e18;
+        uint256 cost = pm.quoteBuyYes(shares);
         usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
@@ -399,15 +388,15 @@ contract PredictionMarketTest is Test {
         pm.resolve(1);
 
         // Bob redeems — pro-rata share of contract balance
-        uint marketBal = usdc.balanceOf(market);
-        uint bobShares = pm.userYes(bob);
-        uint totalYes = pm.yesShares();
-        uint expectedPayout = (marketBal * bobShares) / totalYes;
+        uint256 marketBal = usdc.balanceOf(market);
+        uint256 bobShares = pm.userYes(bob);
+        uint256 totalYes = pm.yesShares();
+        uint256 expectedPayout = (marketBal * bobShares) / totalYes;
 
-        uint balBefore = usdc.balanceOf(bob);
+        uint256 balBefore = usdc.balanceOf(bob);
         vm.prank(bob);
         pm.redeem();
-        uint balAfter = usdc.balanceOf(bob);
+        uint256 balAfter = usdc.balanceOf(bob);
 
         assertEq(balAfter - balBefore, expectedPayout, "Bob should get pro-rata payout");
         assertTrue(expectedPayout > 0, "Payout should be > 0");
@@ -428,7 +417,7 @@ contract PredictionMarketTest is Test {
     // ================================================================
 
     function test_setCreationFee() public {
-        uint newFee = 20e6;
+        uint256 newFee = 20e6;
         factory.setCreationFee(newFee);
         assertEq(factory.creationFee(), newFee);
     }
@@ -458,7 +447,7 @@ contract PredictionMarketTest is Test {
         // Create a market so the factory accumulates fees
         _createMarket(alice);
 
-        uint factoryBal = usdc.balanceOf(address(factory));
+        uint256 factoryBal = usdc.balanceOf(address(factory));
         assertTrue(factoryBal > 0, "Factory should hold retained fees");
 
         address treasury = makeAddr("treasury");
@@ -517,15 +506,15 @@ contract PredictionMarketTest is Test {
         PredictionMarket pm = PredictionMarket(market);
 
         // Bob buys YES shares
-        uint shares = 2e18;
-        uint cost = pm.quoteBuyYes(shares);
+        uint256 shares = 2e18;
+        uint256 cost = pm.quoteBuyYes(shares);
         usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
         pm.buyYes(shares);
 
         // Bob transfers half to alice
-        uint transferAmt = 1e18;
+        uint256 transferAmt = 1e18;
         pm.transferYesShares(alice, transferAmt);
         vm.stopPrank();
 
@@ -538,15 +527,15 @@ contract PredictionMarketTest is Test {
         PredictionMarket pm = PredictionMarket(market);
 
         // Bob buys NO shares
-        uint shares = 2e18;
-        uint cost = pm.quoteBuyNo(shares);
+        uint256 shares = 2e18;
+        uint256 cost = pm.quoteBuyNo(shares);
         usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
         pm.buyNo(shares);
 
         // Bob transfers half to alice
-        uint transferAmt = 1e18;
+        uint256 transferAmt = 1e18;
         pm.transferNoShares(alice, transferAmt);
         vm.stopPrank();
 
@@ -577,7 +566,7 @@ contract PredictionMarketTest is Test {
         PredictionMarket pm = PredictionMarket(market);
 
         // Alice should have liquidity shares from factory seeding
-        uint aliceYes = pm.userYes(alice);
+        uint256 aliceYes = pm.userYes(alice);
         assertTrue(aliceYes > 0, "Alice should have YES shares from liquidity");
 
         vm.prank(alice);
@@ -599,8 +588,8 @@ contract PredictionMarketTest is Test {
         assertTrue(pm.paused());
 
         // Bob tries to buy — should revert
-        uint shares = 1e18;
-        uint cost = pm.quoteBuyYes(shares);
+        uint256 shares = 1e18;
+        uint256 cost = pm.quoteBuyYes(shares);
         usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
@@ -621,8 +610,8 @@ contract PredictionMarketTest is Test {
         assertFalse(pm.paused());
 
         // Bob can trade again
-        uint shares = 1e18;
-        uint cost = pm.quoteBuyYes(shares);
+        uint256 shares = 1e18;
+        uint256 cost = pm.quoteBuyYes(shares);
         usdc.mint(bob, cost);
         vm.startPrank(bob);
         usdc.approve(market, cost);
@@ -667,7 +656,7 @@ contract PredictionMarketTest is Test {
         pm.resolve(2); // NO wins
 
         // Should be RESOLVED (auto-closed internally)
-        assertEq(uint(pm.marketState()), uint(PredictionMarket.MarketState.RESOLVED));
+        assertEq(uint256(pm.marketState()), uint256(PredictionMarket.MarketState.RESOLVED));
         assertEq(pm.resolvedOutcome(), 2);
     }
 
@@ -676,7 +665,7 @@ contract PredictionMarketTest is Test {
     // ================================================================
 
     function test_setCreationFee_rejectsAboveMaxFee() public {
-        uint maxFee = factory.MAX_CREATION_FEE();
+        uint256 maxFee = factory.MAX_CREATION_FEE();
         vm.expectRevert("Fee exceeds max");
         factory.setCreationFee(maxFee + 1);
     }
@@ -708,16 +697,12 @@ contract PredictionMarketTest is Test {
 
         // The market contract should hold exactly INITIAL_LIQUIDITY of USDC.
         // seedShares transfers USDC directly — no rounding.
-        uint marketBalance = usdc.balanceOf(market);
+        uint256 marketBalance = usdc.balanceOf(market);
         assertEq(marketBalance, INITIAL_LIQUIDITY, "Market should hold full initial liquidity");
 
         // The factory should retain exactly (CREATION_FEE - INITIAL_LIQUIDITY)
-        uint factoryBalance = usdc.balanceOf(address(factory));
-        assertEq(
-            factoryBalance,
-            CREATION_FEE - INITIAL_LIQUIDITY,
-            "Factory should retain fee minus liquidity"
-        );
+        uint256 factoryBalance = usdc.balanceOf(address(factory));
+        assertEq(factoryBalance, CREATION_FEE - INITIAL_LIQUIDITY, "Factory should retain fee minus liquidity");
     }
 
     // ================================================================
@@ -729,8 +714,8 @@ contract PredictionMarketTest is Test {
         PredictionMarket pm = PredictionMarket(market);
 
         // Bob buys a large YES position
-        uint bobShares = 10e18;
-        uint bobCost = pm.quoteBuyYes(bobShares);
+        uint256 bobShares = 10e18;
+        uint256 bobCost = pm.quoteBuyYes(bobShares);
         usdc.mint(bob, bobCost);
         vm.startPrank(bob);
         usdc.approve(market, bobCost);
@@ -742,14 +727,14 @@ contract PredictionMarketTest is Test {
         vm.prank(oracle);
         pm.resolve(1);
 
-        uint marketBalBefore = usdc.balanceOf(market);
+        uint256 marketBalBefore = usdc.balanceOf(market);
 
         // Snapshot balances before redemptions
-        uint aliceBalBefore = usdc.balanceOf(alice);
-        uint bobBalBefore = usdc.balanceOf(bob);
+        uint256 aliceBalBefore = usdc.balanceOf(alice);
+        uint256 bobBalBefore = usdc.balanceOf(bob);
 
         // Alice redeems first (she has seeded shares)
-        uint aliceYes = pm.userYes(alice);
+        uint256 aliceYes = pm.userYes(alice);
         assertTrue(aliceYes > 0, "Alice should have YES shares");
         vm.prank(alice);
         pm.redeem();
@@ -759,18 +744,13 @@ contract PredictionMarketTest is Test {
         pm.redeem();
 
         // Market should be fully drained (within rounding)
-        uint marketBalAfter = usdc.balanceOf(market);
+        uint256 marketBalAfter = usdc.balanceOf(market);
         assertLe(marketBalAfter, 1, "Market should be ~empty after all redemptions");
 
         // Total paid out should equal the market balance before redemptions
-        uint alicePayout = usdc.balanceOf(alice) - aliceBalBefore;
-        uint bobPayout = usdc.balanceOf(bob) - bobBalBefore;
-        assertApproxEqAbs(
-            alicePayout + bobPayout,
-            marketBalBefore,
-            1,
-            "Total payouts should equal contract balance"
-        );
+        uint256 alicePayout = usdc.balanceOf(alice) - aliceBalBefore;
+        uint256 bobPayout = usdc.balanceOf(bob) - bobBalBefore;
+        assertApproxEqAbs(alicePayout + bobPayout, marketBalBefore, 1, "Total payouts should equal contract balance");
     }
 
     function test_redeem_proRata_creatorGetsShare() public {
@@ -784,7 +764,7 @@ contract PredictionMarketTest is Test {
         pm.resolve(1);
 
         // Alice redeems — she should get the full contract balance
-        uint marketBal = usdc.balanceOf(market);
+        uint256 marketBal = usdc.balanceOf(market);
         assertTrue(marketBal > 0, "Market should have USDC");
 
         vm.prank(alice);

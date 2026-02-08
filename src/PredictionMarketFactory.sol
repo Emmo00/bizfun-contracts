@@ -15,47 +15,47 @@ contract PredictionMarketFactory {
     // ---------------- STRUCTS ----------------
 
     struct MarketInfo {
-        uint    marketId;       // sequential market id
-        address market;         // deployed PredictionMarket address
-        address creator;        // who created the market
-        string  metadataURI;    // IPFS / Arweave / HTTPS link to off-chain JSON metadata
-        uint    createdAt;      // block.timestamp at creation
+        uint256 marketId; // sequential market id
+        address market; // deployed PredictionMarket address
+        address creator; // who created the market
+        string metadataURI; // IPFS / Arweave / HTTPS link to off-chain JSON metadata
+        uint256 createdAt; // block.timestamp at creation
     }
 
     // ---------------- EVENTS ----------------
 
     event MarketCreated(
-        uint indexed marketId,
+        uint256 indexed marketId,
         address indexed market,
         address indexed creator,
         address oracle,
-        uint tradingDeadline,
-        uint resolveTime,
-        uint liquidityParam,
-        uint initialLiquidity,
+        uint256 tradingDeadline,
+        uint256 resolveTime,
+        uint256 liquidityParam,
+        uint256 initialLiquidity,
         string metadataURI
     );
 
     event MetadataUpdated(address indexed market, string newURI);
-    event CreationFeeUpdated(uint oldFee, uint newFee);
-    event InitialLiquidityUpdated(uint oldAmount, uint newAmount);
-    event FeesWithdrawn(address indexed to, uint amount);
+    event CreationFeeUpdated(uint256 oldFee, uint256 newFee);
+    event InitialLiquidityUpdated(uint256 oldAmount, uint256 newAmount);
+    event FeesWithdrawn(address indexed to, uint256 amount);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ---------------- STATE ----------------
 
     IERC20 public immutable COLLATERAL_TOKEN; // USDC (single global token)
-    address public immutable IMPLEMENTATION;   // PredictionMarket logic contract
+    address public immutable IMPLEMENTATION; // PredictionMarket logic contract
 
-    uint public constant COLLATERAL_DECIMALS = 6;   // USDC decimals
-    uint public constant MAX_CREATION_FEE = 1000e6;  // $1000 USDC cap
+    uint256 public constant COLLATERAL_DECIMALS = 6; // USDC decimals
+    uint256 public constant MAX_CREATION_FEE = 1000e6; // $1000 USDC cap
 
     address public owner;
-    uint public creationFee;        // total fee charged to creator (in USDC, 6-decimal)
-    uint public initialLiquidity;   // portion of fee sent to seed the new market
+    uint256 public creationFee; // total fee charged to creator (in USDC, 6-decimal)
+    uint256 public initialLiquidity; // portion of fee sent to seed the new market
 
-    uint public marketCount;
-    mapping(uint => MarketInfo) public markets;
+    uint256 public marketCount;
+    mapping(uint256 => MarketInfo) public markets;
     mapping(address => MarketInfo) public marketInfoByAddress;
     address[] public allMarkets;
 
@@ -76,12 +76,7 @@ contract PredictionMarketFactory {
     /// @param _implementation   Address of the deployed PredictionMarket logic contract (used as clone template).
     /// @param _creationFee      Total fee in USDC (e.g. 10e6 for $10 USDC).
     /// @param _initialLiquidity Portion of fee forwarded to seed the market (must be <= _creationFee).
-    constructor(
-        address _collateralToken,
-        address _implementation,
-        uint _creationFee,
-        uint _initialLiquidity
-    ) {
+    constructor(address _collateralToken, address _implementation, uint256 _creationFee, uint256 _initialLiquidity) {
         require(_collateralToken != address(0), "Invalid token");
         require(_implementation != address(0), "Invalid implementation");
         require(_creationFee <= MAX_CREATION_FEE, "Fee exceeds max");
@@ -108,9 +103,9 @@ contract PredictionMarketFactory {
     /// @return marketAddress    Address of the newly deployed PredictionMarket.
     function createMarket(
         address _oracle,
-        uint _tradingDeadline,
-        uint _resolveTime,
-        uint _b,
+        uint256 _tradingDeadline,
+        uint256 _resolveTime,
+        uint256 _b,
         string calldata _metadataUri
     ) external returns (address) {
         require(_oracle != address(0), "Invalid oracle");
@@ -121,10 +116,7 @@ contract PredictionMarketFactory {
 
         // ----- Collect creation fee from caller -----
         if (creationFee > 0) {
-            require(
-                COLLATERAL_TOKEN.transferFrom(msg.sender, address(this), creationFee),
-                "Fee transfer failed"
-            );
+            require(COLLATERAL_TOKEN.transferFrom(msg.sender, address(this), creationFee), "Fee transfer failed");
         }
 
         // ----- Deploy new PredictionMarket clone (EIP-1167 minimal proxy) -----
@@ -133,7 +125,7 @@ contract PredictionMarketFactory {
         market.initialize(
             address(COLLATERAL_TOKEN),
             _oracle,
-            msg.sender,        // creator
+            msg.sender, // creator
             _tradingDeadline,
             _resolveTime,
             _b,
@@ -141,7 +133,7 @@ contract PredictionMarketFactory {
         );
 
         // ----- Store market info BEFORE external calls (CEI pattern) -----
-        uint id = marketCount;
+        uint256 id = marketCount;
         MarketInfo memory info = MarketInfo({
             marketId: id,
             market: marketAddress,
@@ -157,31 +149,20 @@ contract PredictionMarketFactory {
         // ----- Seed initial balanced liquidity -----
         if (initialLiquidity > 0) {
             // Transfer USDC directly into the market contract.
-            require(
-                COLLATERAL_TOKEN.transfer(marketAddress, initialLiquidity),
-                "Liquidity transfer failed"
-            );
+            require(COLLATERAL_TOKEN.transfer(marketAddress, initialLiquidity), "Liquidity transfer failed");
 
             // Record equal YES and NO shares under the creator.
             // LMSR identity: C(q, q) - C(0, 0) = q, so sharesPerSide = initialLiquidity * collateralScale
             // gives a total cost of exactly initialLiquidity USDC.
             // By using seedShares we skip the buy path entirely — no rounding, no
             // sequential-cost asymmetry.
-            uint collateralScaleFactor = 10 ** (18 - COLLATERAL_DECIMALS);
-            uint sharesPerSide = initialLiquidity * collateralScaleFactor;
+            uint256 collateralScaleFactor = 10 ** (18 - COLLATERAL_DECIMALS);
+            uint256 sharesPerSide = initialLiquidity * collateralScaleFactor;
             market.seedShares(msg.sender, sharesPerSide, sharesPerSide);
         }
 
         emit MarketCreated(
-            id,
-            marketAddress,
-            msg.sender,
-            _oracle,
-            _tradingDeadline,
-            _resolveTime,
-            _b,
-            initialLiquidity,
-            _metadataUri
+            id, marketAddress, msg.sender, _oracle, _tradingDeadline, _resolveTime, _b, initialLiquidity, _metadataUri
         );
 
         return marketAddress;
@@ -209,13 +190,13 @@ contract PredictionMarketFactory {
     // ---------------- VIEW HELPERS ----------------
 
     /// @notice Get the address of a market by its sequential id.
-    function getMarket(uint _id) external view returns (address) {
+    function getMarket(uint256 _id) external view returns (address) {
         require(_id < marketCount, "Invalid market id");
         return markets[_id].market;
     }
 
     /// @notice Get full info for a market by its sequential id.
-    function getMarketInfo(uint _id) external view returns (MarketInfo memory) {
+    function getMarketInfo(uint256 _id) external view returns (MarketInfo memory) {
         require(_id < marketCount, "Invalid market id");
         return markets[_id];
     }
@@ -228,7 +209,7 @@ contract PredictionMarketFactory {
     }
 
     /// @notice Get the total number of deployed markets.
-    function getMarketCount() external view returns (uint) {
+    function getMarketCount() external view returns (uint256) {
         return marketCount;
     }
 
@@ -240,26 +221,26 @@ contract PredictionMarketFactory {
     // ---------------- ADMIN ----------------
 
     /// @notice Update the creation fee.
-    function setCreationFee(uint _newFee) external onlyOwner {
+    function setCreationFee(uint256 _newFee) external onlyOwner {
         require(_newFee <= MAX_CREATION_FEE, "Fee exceeds max");
         require(_newFee >= initialLiquidity, "Fee < liquidity");
-        uint oldFee = creationFee;
+        uint256 oldFee = creationFee;
         creationFee = _newFee;
         emit CreationFeeUpdated(oldFee, _newFee);
     }
 
     /// @notice Update the initial liquidity amount seeded into new markets.
-    function setInitialLiquidity(uint _newAmount) external onlyOwner {
+    function setInitialLiquidity(uint256 _newAmount) external onlyOwner {
         require(_newAmount <= creationFee, "Liquidity > fee");
-        uint oldAmount = initialLiquidity;
+        uint256 oldAmount = initialLiquidity;
         initialLiquidity = _newAmount;
         emit InitialLiquidityUpdated(oldAmount, _newAmount);
     }
 
     /// @notice Withdraw accumulated protocol fees (fee - initialLiquidity portion per market).
-    function withdrawFees(address _to, uint _amount) external onlyOwner {
+    function withdrawFees(address _to, uint256 _amount) external onlyOwner {
         require(_to != address(0), "Invalid address");
-        uint balance = COLLATERAL_TOKEN.balanceOf(address(this));
+        uint256 balance = COLLATERAL_TOKEN.balanceOf(address(this));
         require(_amount <= balance, "Insufficient balance");
 
         require(COLLATERAL_TOKEN.transfer(_to, _amount), "Withdraw failed");

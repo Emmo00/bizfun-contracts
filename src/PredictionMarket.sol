@@ -5,18 +5,22 @@ import {IERC20} from "./interfaces/IERC20.sol";
 import {SD59x18, sd, unwrap} from "@prb/math/SD59x18.sol";
 
 contract PredictionMarket {
-    enum MarketState { OPEN, CLOSED, RESOLVED }
+    enum MarketState {
+        OPEN,
+        CLOSED,
+        RESOLVED
+    }
 
     // ---------------- EVENTS ----------------
 
-    event SharesBought(address indexed user, bool indexed isYes, uint shares, uint cost);
-    event SharesSold(address indexed user, bool indexed isYes, uint shares, uint refund);
-    event SharesTransferred(address indexed from, address indexed to, bool indexed isYes, uint shares);
+    event SharesBought(address indexed user, bool indexed isYes, uint256 shares, uint256 cost);
+    event SharesSold(address indexed user, bool indexed isYes, uint256 shares, uint256 refund);
+    event SharesTransferred(address indexed from, address indexed to, bool indexed isYes, uint256 shares);
     event MarketClosed();
     event MarketResolved(uint8 outcome);
     event MarketPaused();
     event MarketUnpaused();
-    event Redeemed(address indexed user, uint payout);
+    event Redeemed(address indexed user, uint256 payout);
 
     // ---------------- STATE ----------------
 
@@ -24,23 +28,23 @@ contract PredictionMarket {
     address public oracle;
     address public creator;
     address public factory;
-    uint public tradingDeadline;
-    uint public resolveTime;
-    uint public b; // liquidity parameter (scaled)
+    uint256 public tradingDeadline;
+    uint256 public resolveTime;
+    uint256 public b; // liquidity parameter (scaled)
 
     bool public initialized;
     MarketState public marketState;
     uint8 public resolvedOutcome; // 1 = YES, 2 = NO
     bool public paused;
 
-    uint public yesShares;
-    uint public noShares;
+    uint256 public yesShares;
+    uint256 public noShares;
 
-    mapping(address => uint) public userYes;
-    mapping(address => uint) public userNo;
+    mapping(address => uint256) public userYes;
+    mapping(address => uint256) public userNo;
 
-    uint private constant ONE = 1e18; // fixed point scale
-    uint public collateralScale;      // 10^(18 - collateral decimals), e.g. 1e12 for USDC-6
+    uint256 private constant ONE = 1e18; // fixed point scale
+    uint256 public collateralScale; // 10^(18 - collateral decimals), e.g. 1e12 for USDC-6
 
     /// @notice Initialize the market (used by clones instead of a constructor).
     ///         Can only be called once.
@@ -48,10 +52,10 @@ contract PredictionMarket {
         address _collateral,
         address _oracle,
         address _creator,
-        uint _tradingDeadline,
-        uint _resolveTime,
-        uint _b,
-        uint _collateralDecimals
+        uint256 _tradingDeadline,
+        uint256 _resolveTime,
+        uint256 _b,
+        uint256 _collateralDecimals
     ) external {
         require(!initialized, "Already initialized");
         initialized = true;
@@ -97,7 +101,7 @@ contract PredictionMarket {
     ///        C = b * (m + ln(exp(a - m) + exp(c - m)))
     ///      where a = qYes/b, c = qNo/b, m = max(a, c).
     ///      Since one of the exp terms is always exp(0) = 1, the ln argument is always >= 1.
-    function _cost(uint qYes, uint qNo) internal view returns (uint) {
+    function _cost(uint256 qYes, uint256 qNo) internal view returns (uint256) {
         // forge-lint: disable-next-line(unsafe-typecast)
         SD59x18 bFixed = sd(int256(b));
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -114,31 +118,31 @@ contract PredictionMarket {
 
         int256 raw = unwrap(result);
         // forge-lint: disable-next-line(unsafe-typecast)
-        return raw > 0 ? uint(raw) : 0;
+        return raw > 0 ? uint256(raw) : 0;
     }
 
     /// @notice Returns the current USDC cost to buy `amountShares` of YES shares.
     ///         `amountShares` must be in 1e18 scale (1 share = 1e18).
-    function quoteBuyYes(uint amountShares) external view returns (uint) {
-        uint costBefore = _cost(yesShares, noShares);
-        uint costAfter  = _cost(yesShares + amountShares, noShares);
+    function quoteBuyYes(uint256 amountShares) external view returns (uint256) {
+        uint256 costBefore = _cost(yesShares, noShares);
+        uint256 costAfter = _cost(yesShares + amountShares, noShares);
         return (costAfter - costBefore) / collateralScale;
     }
 
     /// @notice Returns the current USDC cost to buy `amountShares` of NO shares.
     ///         `amountShares` must be in 1e18 scale (1 share = 1e18).
-    function quoteBuyNo(uint amountShares) external view returns (uint) {
-        uint costBefore = _cost(yesShares, noShares);
-        uint costAfter  = _cost(yesShares, noShares + amountShares);
+    function quoteBuyNo(uint256 amountShares) external view returns (uint256) {
+        uint256 costBefore = _cost(yesShares, noShares);
+        uint256 costAfter = _cost(yesShares, noShares + amountShares);
         return (costAfter - costBefore) / collateralScale;
     }
 
     // ---------------- TRADING ----------------
 
-    function buyYes(uint amountShares) external onlyOpen {
-        uint costBefore = _cost(yesShares, noShares);
-        uint costAfter  = _cost(yesShares + amountShares, noShares);
-        uint payment = (costAfter - costBefore) / collateralScale;
+    function buyYes(uint256 amountShares) external onlyOpen {
+        uint256 costBefore = _cost(yesShares, noShares);
+        uint256 costAfter = _cost(yesShares + amountShares, noShares);
+        uint256 payment = (costAfter - costBefore) / collateralScale;
 
         yesShares += amountShares;
         userYes[msg.sender] += amountShares;
@@ -148,10 +152,10 @@ contract PredictionMarket {
         emit SharesBought(msg.sender, true, amountShares, payment);
     }
 
-    function buyNo(uint amountShares) external onlyOpen {
-        uint costBefore = _cost(yesShares, noShares);
-        uint costAfter  = _cost(yesShares, noShares + amountShares);
-        uint payment = (costAfter - costBefore) / collateralScale;
+    function buyNo(uint256 amountShares) external onlyOpen {
+        uint256 costBefore = _cost(yesShares, noShares);
+        uint256 costAfter = _cost(yesShares, noShares + amountShares);
+        uint256 payment = (costAfter - costBefore) / collateralScale;
 
         noShares += amountShares;
         userNo[msg.sender] += amountShares;
@@ -161,12 +165,12 @@ contract PredictionMarket {
         emit SharesBought(msg.sender, false, amountShares, payment);
     }
 
-    function sellYes(uint amountShares) external onlyOpen {
+    function sellYes(uint256 amountShares) external onlyOpen {
         require(userYes[msg.sender] >= amountShares, "Not enough YES");
 
-        uint costBefore = _cost(yesShares, noShares);
-        uint costAfter  = _cost(yesShares - amountShares, noShares);
-        uint refund = (costBefore - costAfter) / collateralScale;
+        uint256 costBefore = _cost(yesShares, noShares);
+        uint256 costAfter = _cost(yesShares - amountShares, noShares);
+        uint256 refund = (costBefore - costAfter) / collateralScale;
 
         yesShares -= amountShares;
         userYes[msg.sender] -= amountShares;
@@ -176,12 +180,12 @@ contract PredictionMarket {
         emit SharesSold(msg.sender, true, amountShares, refund);
     }
 
-    function sellNo(uint amountShares) external onlyOpen {
+    function sellNo(uint256 amountShares) external onlyOpen {
         require(userNo[msg.sender] >= amountShares, "Not enough NO");
 
-        uint costBefore = _cost(yesShares, noShares);
-        uint costAfter  = _cost(yesShares, noShares - amountShares);
-        uint refund = (costBefore - costAfter) / collateralScale;
+        uint256 costBefore = _cost(yesShares, noShares);
+        uint256 costAfter = _cost(yesShares, noShares - amountShares);
+        uint256 refund = (costBefore - costAfter) / collateralScale;
 
         noShares -= amountShares;
         userNo[msg.sender] -= amountShares;
@@ -227,8 +231,8 @@ contract PredictionMarket {
     function redeem() external {
         require(marketState == MarketState.RESOLVED, "Not resolved");
 
-        uint userShares;
-        uint totalWinningShares;
+        uint256 userShares;
+        uint256 totalWinningShares;
         if (resolvedOutcome == 1) {
             userShares = userYes[msg.sender];
             totalWinningShares = yesShares;
@@ -245,8 +249,8 @@ contract PredictionMarket {
         require(totalWinningShares > 0, "No winning shares");
 
         // Pro-rata share of the contract's entire USDC balance
-        uint contractBalance = collateralToken.balanceOf(address(this));
-        uint payout = (contractBalance * userShares) / totalWinningShares;
+        uint256 contractBalance = collateralToken.balanceOf(address(this));
+        uint256 payout = (contractBalance * userShares) / totalWinningShares;
 
         require(payout > 0, "Payout rounds to zero");
         require(collateralToken.transfer(msg.sender, payout), "Transfer failed");
@@ -262,20 +266,20 @@ contract PredictionMarket {
     ///         sequential-buy rounding issues and guarantees the full
     ///         initialLiquidity ends up in the market.
     /// @dev    Only callable by the factory, only while OPEN.
-    function seedShares(address _recipient, uint _yesAmount, uint _noAmount) external {
+    function seedShares(address _recipient, uint256 _yesAmount, uint256 _noAmount) external {
         require(msg.sender == factory, "Only factory");
         require(marketState == MarketState.OPEN, "Market not open");
 
         yesShares += _yesAmount;
-        noShares  += _noAmount;
+        noShares += _noAmount;
         userYes[_recipient] += _yesAmount;
-        userNo[_recipient]  += _noAmount;
+        userNo[_recipient] += _noAmount;
     }
 
     // ---------------- SHARE TRANSFERS ----------------
 
     /// @notice Transfer YES shares to another address.
-    function transferYesShares(address _to, uint _amount) external {
+    function transferYesShares(address _to, uint256 _amount) external {
         require(_to != address(0), "Invalid recipient");
         require(userYes[msg.sender] >= _amount, "Insufficient YES shares");
 
@@ -286,7 +290,7 @@ contract PredictionMarket {
     }
 
     /// @notice Transfer NO shares to another address.
-    function transferNoShares(address _to, uint _amount) external {
+    function transferNoShares(address _to, uint256 _amount) external {
         require(_to != address(0), "Invalid recipient");
         require(userNo[msg.sender] >= _amount, "Insufficient NO shares");
 

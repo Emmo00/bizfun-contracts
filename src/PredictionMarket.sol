@@ -54,8 +54,7 @@ contract PredictionMarket {
         address _creator,
         uint256 _tradingDeadline,
         uint256 _resolveTime,
-        uint256 _b,
-        uint256 _collateralDecimals
+        uint256 _b
     ) external {
         require(!initialized, "Already initialized");
         initialized = true;
@@ -71,7 +70,8 @@ contract PredictionMarket {
 
         // Pre-compute the divisor that converts LMSR cost output (1e18 scale)
         // to collateral token units.  For USDC (6 decimals) this is 1e12.
-        collateralScale = 10 ** (18 - _collateralDecimals);
+        uint256 decimals_ = IERC20(_collateral).decimals();
+        collateralScale = 10 ** (18 - decimals_);
     }
 
     modifier onlyOracle() {

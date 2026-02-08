@@ -143,7 +143,7 @@ factory.createMarket(
 **What happens internally:**
 - Factory pulls `creationFee` USDC from caller
 - Deploys an EIP-1167 clone of the PredictionMarket implementation
-- Calls `initialize(...)` on the clone (including `COLLATERAL_DECIMALS = 6` so the market can convert LMSR outputs to USDC amounts). The clone records `factory = msg.sender` during initialization.
+- Calls `initialize(...)` on the clone. The market auto-fetches `decimals()` from the collateral token to compute `collateralScale` (e.g. `1e12` for USDC-6, `1` for 18-decimal tokens). The clone records `factory = msg.sender` during initialization.
 - Seeds balanced liquidity via **direct transfer + `seedShares`**: transfers `initialLiquidity` USDC directly into the market contract, then calls `market.seedShares(msg.sender, sharesPerSide, sharesPerSide)` where `sharesPerSide = initialLiquidity * collateralScale` (i.e. `5e6 * 1e12 = 5e18`). This records equal YES and NO shares under the creator **without** going through the buy path — avoiding sequential-cost rounding and guaranteeing the full `initialLiquidity` ends up in the market.
 - By the LMSR identity $C(q, q) - C(0, 0) = q$, balanced shares of `sharesPerSide` in 1e18 scale map to exactly `initialLiquidity` in collateral.
 - Stores market info and emits `MarketCreated` event
@@ -401,7 +401,7 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 
 | Function | Signature | Access | Description |
 | -------- | --------- | ------ | ----------- |
-| `initialize` | `initialize(address _collateral, address _oracle, address _creator, uint _tradingDeadline, uint _resolveTime, uint _b, uint _collateralDecimals)` | External, once | Initializes a cloned market. Called by factory during creation. Sets `collateralScale = 10^(18 - _collateralDecimals)` for converting LMSR output to collateral units. |
+| `initialize` | `initialize(address _collateral, address _oracle, address _creator, uint _tradingDeadline, uint _resolveTime, uint _b)` | External, once | Initializes a cloned market. Called by factory during creation. Auto-fetches `decimals()` from the collateral token and sets `collateralScale = 10^(18 - decimals)` for converting LMSR output to collateral units. |
 | `quoteBuyYes` | `quoteBuyYes(uint amountShares) → uint` | View | Returns USDC cost (6 decimals) to buy given YES shares. `amountShares` must be in 1e18 scale. |
 | `quoteBuyNo` | `quoteBuyNo(uint amountShares) → uint` | View | Returns USDC cost (6 decimals) to buy given NO shares. `amountShares` must be in 1e18 scale. |
 | `buyYes` | `buyYes(uint amountShares)` | External | Buy YES shares. Requires OPEN, not paused, before deadline. Pulls USDC. |
@@ -462,8 +462,8 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 | ------ | ------- | ----------- |
 | `COLLATERAL_TOKEN()` | `address` | USDC token address (immutable) |
 | `IMPLEMENTATION()` | `address` | PredictionMarket implementation used for clones (immutable) |
-| `COLLATERAL_DECIMALS()` | `uint` | `6` — USDC decimals (constant) |
-| `MAX_CREATION_FEE()` | `uint` | `1000e6` — hard cap on fee (constant) |
+| `COLLATERAL_DECIMALS()` | `uint` | Decimals of the collateral token — auto-fetched from `COLLATERAL_TOKEN.decimals()` at deploy time (immutable) |
+| `MAX_CREATION_FEE()` | `uint` | `1000 * 10^COLLATERAL_DECIMALS` — hard cap on fee (immutable) |
 
 **Public state variable getters:**
 

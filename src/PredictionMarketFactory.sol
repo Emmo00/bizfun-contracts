@@ -44,11 +44,11 @@ contract PredictionMarketFactory {
 
     // ---------------- STATE ----------------
 
-    IERC20 public immutable COLLATERAL_TOKEN; // USDC (single global token)
+    IERC20 public immutable COLLATERAL_TOKEN; // Stablecoin (USDC, BUSD, USDT, etc.)
     address public immutable IMPLEMENTATION; // PredictionMarket logic contract
 
-    uint256 public constant COLLATERAL_DECIMALS = 6; // USDC decimals
-    uint256 public constant MAX_CREATION_FEE = 1000e6; // $1000 USDC cap
+    uint256 public immutable COLLATERAL_DECIMALS; // e.g. 6 for USDC, 18 for BUSD/USDT on BNB
+    uint256 public immutable MAX_CREATION_FEE; // $1000 cap denominated in collateral decimals
 
     address public owner;
     uint256 public creationFee; // total fee charged to creator (in USDC, 6-decimal)
@@ -72,13 +72,25 @@ contract PredictionMarketFactory {
 
     // ---------------- CONSTRUCTOR ----------------
 
-    /// @param _collateralToken  Address of the USDC token contract.
-    /// @param _implementation   Address of the deployed PredictionMarket logic contract (used as clone template).
-    /// @param _creationFee      Total fee in USDC (e.g. 10e6 for $10 USDC).
-    /// @param _initialLiquidity Portion of fee forwarded to seed the market (must be <= _creationFee).
-    constructor(address _collateralToken, address _implementation, uint256 _creationFee, uint256 _initialLiquidity) {
+    /// @param _collateralToken    Address of the collateral stablecoin contract (must expose `decimals()`).
+    /// @param _implementation     Address of the deployed PredictionMarket logic contract (used as clone template).
+    /// @param _creationFee        Total fee in collateral units (e.g. 10e6 for $10 when decimals=6, or 10e18 when decimals=18).
+    /// @param _initialLiquidity   Portion of fee forwarded to seed the market (must be <= _creationFee).
+    constructor(
+        address _collateralToken,
+        address _implementation,
+        uint256 _creationFee,
+        uint256 _initialLiquidity
+    ) {
         require(_collateralToken != address(0), "Invalid token");
         require(_implementation != address(0), "Invalid implementation");
+
+        uint256 decimals_ = IERC20(_collateralToken).decimals();
+        require(decimals_ <= 18, "Decimals too high");
+
+        COLLATERAL_DECIMALS = decimals_;
+        MAX_CREATION_FEE = 1000 * (10 ** decimals_); // $1000 cap
+
         require(_creationFee <= MAX_CREATION_FEE, "Fee exceeds max");
         require(_initialLiquidity <= _creationFee, "Liquidity > fee");
 
@@ -128,8 +140,7 @@ contract PredictionMarketFactory {
             msg.sender, // creator
             _tradingDeadline,
             _resolveTime,
-            _b,
-            COLLATERAL_DECIMALS
+            _b
         );
 
         // ----- Store market info BEFORE external calls (CEI pattern) -----

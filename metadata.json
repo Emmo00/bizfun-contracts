@@ -1,0 +1,11 @@
+{
+  "question": "Will this business make $3,000 in the next 30 days?",
+  "businessName": "Acme Widget Co",
+  "description": "Acme sells handcrafted widgets to enterprise customers...",
+  "category": "e-commerce",
+  "imageUrl": "https://i1.sndcdn.com/artworks-000450947466-yt7sim-t500x500.jpg",
+  "socialLinks": {
+    "twitter": "https://x.com/acmewidgets",
+    "website": "https://acmewidgets.com"
+  }
+}

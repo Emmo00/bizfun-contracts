@@ -39,6 +39,7 @@ contract PredictionMarket {
     mapping(address => uint) public userNo;
 
     uint private constant ONE = 1e18; // fixed point scale
+    uint public collateralScale;      // 10^(18 - collateral decimals), e.g. 1e12 for USDC-6
 
     /// @notice Initialize the market (used by clones instead of a constructor).
     ///         Can only be called once.
@@ -48,7 +49,8 @@ contract PredictionMarket {
         address _creator,
         uint _tradingDeadline,
         uint _resolveTime,
-        uint _b
+        uint _b,
+        uint _collateralDecimals
     ) external {
         require(!initialized, "Already initialized");
         initialized = true;
@@ -60,6 +62,10 @@ contract PredictionMarket {
         resolveTime = _resolveTime;
         b = _b;
         marketState = MarketState.OPEN;
+
+        // Pre-compute the divisor that converts LMSR cost output (1e18 scale)
+        // to collateral token units.  For USDC (6 decimals) this is 1e12.
+        collateralScale = 10 ** (18 - _collateralDecimals);
     }
 
     modifier onlyOracle() {
@@ -109,18 +115,20 @@ contract PredictionMarket {
         return raw > 0 ? uint(raw) : 0;
     }
 
-    /// @notice Returns the current cost to buy `amountShares` of YES shares.
+    /// @notice Returns the current USDC cost to buy `amountShares` of YES shares.
+    ///         `amountShares` must be in 1e18 scale (1 share = 1e18).
     function quoteBuyYes(uint amountShares) external view returns (uint) {
         uint costBefore = _cost(yesShares, noShares);
         uint costAfter  = _cost(yesShares + amountShares, noShares);
-        return costAfter - costBefore;
+        return (costAfter - costBefore) / collateralScale;
     }
 
-    /// @notice Returns the current cost to buy `amountShares` of NO shares.
+    /// @notice Returns the current USDC cost to buy `amountShares` of NO shares.
+    ///         `amountShares` must be in 1e18 scale (1 share = 1e18).
     function quoteBuyNo(uint amountShares) external view returns (uint) {
         uint costBefore = _cost(yesShares, noShares);
         uint costAfter  = _cost(yesShares, noShares + amountShares);
-        return costAfter - costBefore;
+        return (costAfter - costBefore) / collateralScale;
     }
 
     // ---------------- TRADING ----------------
@@ -128,7 +136,7 @@ contract PredictionMarket {
     function buyYes(uint amountShares) external onlyOpen {
         uint costBefore = _cost(yesShares, noShares);
         uint costAfter  = _cost(yesShares + amountShares, noShares);
-        uint payment = costAfter - costBefore;
+        uint payment = (costAfter - costBefore) / collateralScale;
 
         yesShares += amountShares;
         userYes[msg.sender] += amountShares;
@@ -141,7 +149,7 @@ contract PredictionMarket {
     function buyNo(uint amountShares) external onlyOpen {
         uint costBefore = _cost(yesShares, noShares);
         uint costAfter  = _cost(yesShares, noShares + amountShares);
-        uint payment = costAfter - costBefore;
+        uint payment = (costAfter - costBefore) / collateralScale;
 
         noShares += amountShares;
         userNo[msg.sender] += amountShares;
@@ -156,7 +164,7 @@ contract PredictionMarket {
 
         uint costBefore = _cost(yesShares, noShares);
         uint costAfter  = _cost(yesShares - amountShares, noShares);
-        uint refund = costBefore - costAfter;
+        uint refund = (costBefore - costAfter) / collateralScale;
 
         yesShares -= amountShares;
         userYes[msg.sender] -= amountShares;
@@ -171,7 +179,7 @@ contract PredictionMarket {
 
         uint costBefore = _cost(yesShares, noShares);
         uint costAfter  = _cost(yesShares, noShares - amountShares);
-        uint refund = costBefore - costAfter;
+        uint refund = (costBefore - costAfter) / collateralScale;
 
         noShares -= amountShares;
         userNo[msg.sender] -= amountShares;
@@ -213,16 +221,20 @@ contract PredictionMarket {
     function redeem() external {
         require(marketState == MarketState.RESOLVED, "Not resolved");
 
-        uint payout;
+        uint shares;
         if (resolvedOutcome == 1) {
-            payout = userYes[msg.sender];
+            shares = userYes[msg.sender];
             userYes[msg.sender] = 0;
         } else {
-            payout = userNo[msg.sender];
+            shares = userNo[msg.sender];
             userNo[msg.sender] = 0;
         }
 
-        require(payout > 0, "Nothing to redeem");
+        require(shares > 0, "Nothing to redeem");
+
+        // Convert shares (1e18 scale) to collateral units (e.g. 1e6 for USDC)
+        uint payout = shares / collateralScale;
+        require(payout > 0, "Payout rounds to zero");
         require(collateralToken.transfer(msg.sender, payout), "Transfer failed");
 
         emit Redeemed(msg.sender, payout);

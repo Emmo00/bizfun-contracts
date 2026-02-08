@@ -47,7 +47,8 @@ contract PredictionMarketFactory {
     IERC20 public immutable COLLATERAL_TOKEN; // USDC (single global token)
     address public immutable IMPLEMENTATION;   // PredictionMarket logic contract
 
-    uint public constant MAX_CREATION_FEE = 1000e6; // $1000 USDC cap
+    uint public constant COLLATERAL_DECIMALS = 6;   // USDC decimals
+    uint public constant MAX_CREATION_FEE = 1000e6;  // $1000 USDC cap
 
     address public owner;
     uint public creationFee;        // total fee charged to creator (in USDC, 6-decimal)
@@ -135,7 +136,8 @@ contract PredictionMarketFactory {
             msg.sender,        // creator
             _tradingDeadline,
             _resolveTime,
-            _b
+            _b,
+            COLLATERAL_DECIMALS
         );
 
         // ----- Store market info BEFORE external calls (CEI pattern) -----
@@ -154,21 +156,24 @@ contract PredictionMarketFactory {
 
         // ----- Seed initial balanced liquidity -----
         if (initialLiquidity > 0) {
-            // Split evenly between YES and NO to start at ~50/50 probability
-            uint halfLiquidity = initialLiquidity / 2;
+            // Split evenly between YES and NO to start at ~50/50 probability.
+            // Scale USDC amount (6 decimals) to share units (18 decimals) so
+            // shares and the LMSR `b` parameter live in the same 1e18 space.
+            uint halfShares = (initialLiquidity / 2) * 1e12;
 
-            // Approve the market to pull USDC from this factory
+            // Approve the market to pull USDC from this factory for the
+            // LMSR cost of seeding (the cost output is scaled back to
+            // collateral decimals by the market contract).
             COLLATERAL_TOKEN.approve(marketAddress, initialLiquidity);
 
             // Buy YES shares
-            if (halfLiquidity > 0) {
-                market.buyYes(halfLiquidity);
+            if (halfShares > 0) {
+                market.buyYes(halfShares);
             }
 
-            // Buy NO shares with remaining amount
-            uint remainingLiquidity = initialLiquidity - halfLiquidity;
-            if (remainingLiquidity > 0) {
-                market.buyNo(remainingLiquidity);
+            // Buy NO shares with same amount
+            if (halfShares > 0) {
+                market.buyNo(halfShares);
             }
 
             // Transfer liquidity shares to the market creator

@@ -135,8 +135,8 @@ factory.createMarket(
 **What happens internally:**
 - Factory pulls `creationFee` USDC from caller
 - Deploys an EIP-1167 clone of the PredictionMarket implementation
-- Calls `initialize(...)` on the clone
-- Seeds balanced liquidity: buys `initialLiquidity / 2` YES shares and `initialLiquidity - initialLiquidity / 2` NO shares
+- Calls `initialize(...)` on the clone (including `COLLATERAL_DECIMALS = 6` so the market can convert LMSR outputs to USDC amounts)
+- Seeds balanced liquidity: scales `initialLiquidity / 2` from USDC units (6 decimals) to share units (18 decimals) via `* 1e12`, then buys that many YES and NO shares
 - Transfers those liquidity shares to the caller (market creator)
 - Stores market info and emits `MarketCreated` event
 - Returns the new market's address
@@ -185,8 +185,8 @@ market.quoteBuyYes(uint amountShares) returns (uint costInUSDC)
 market.quoteBuyNo(uint amountShares) returns (uint costInUSDC)
 ```
 
-- `amountShares` is in 1e18 scale (e.g., `1e18` = 1 share, `5e18` = 5 shares).
-- Returns the USDC cost (6 decimals) to buy that many shares at the current state.
+- `amountShares` is in 1e18 scale (e.g., `1e18` = 1 share, `5e18` = 5 shares). **Do not pass raw numbers like `50` — use `50e18`.**
+- Returns the USDC cost (6 decimals) to buy that many shares at the current state. The LMSR output is automatically scaled down by `collateralScale` (1e12 for USDC).
 - These are view functions — they cost no gas.
 
 **Reading current market state:**
@@ -226,8 +226,8 @@ market.buyYes(uint amountShares)   // Buy YES shares
 market.buyNo(uint amountShares)    // Buy NO shares
 ```
 
-- Pulls USDC from caller equal to the LMSR-computed cost.
-- Increments `yesShares`/`noShares` global totals and `userYes[msg.sender]`/`userNo[msg.sender]`.
+- Pulls USDC from caller equal to the LMSR-computed cost (scaled to 6 decimals).
+- Increments `yesShares`/`noShares` global totals and `userYes[msg.sender]`/`userNo[msg.sender]` (in 1e18 scale).
 - Emits `SharesBought(address user, bool isYes, uint shares, uint cost)`.
 
 **Requirements:** Market must be `OPEN`, not `paused`, and `block.timestamp < tradingDeadline`.
@@ -307,12 +307,12 @@ market.redeem()
 ```
 
 - Callable after market is `RESOLVED`.
-- If `resolvedOutcome == 1` (YES won): payout = caller's YES share balance.
-- If `resolvedOutcome == 2` (NO won): payout = caller's NO share balance.
-- Zeroes the caller's winning share balance and transfers USDC.
+- If `resolvedOutcome == 1` (YES won): payout = caller's YES share balance / `collateralScale`.
+- If `resolvedOutcome == 2` (NO won): payout = caller's NO share balance / `collateralScale`.
+- Zeroes the caller's winning share balance and transfers the USDC payout.
 - Emits `Redeemed(address user, uint payout)`.
 
-> **Important:** The payout is in the raw share units. The LMSR math ensures the market contract holds enough USDC to pay all winners.
+> **Important:** Shares are in 1e18 scale but payouts are converted to collateral units (e.g. USDC 6 decimals) by dividing by `collateralScale` (1e12 for USDC). The LMSR math ensures the market contract holds enough USDC to pay all winners.
 
 ---
 
@@ -390,16 +390,16 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 
 | Function | Signature | Access | Description |
 | -------- | --------- | ------ | ----------- |
-| `initialize` | `initialize(address _collateral, address _oracle, address _creator, uint _tradingDeadline, uint _resolveTime, uint _b)` | External, once | Initializes a cloned market. Called by factory during creation. |
-| `quoteBuyYes` | `quoteBuyYes(uint amountShares) → uint` | View | Returns USDC cost to buy given YES shares at current state. |
-| `quoteBuyNo` | `quoteBuyNo(uint amountShares) → uint` | View | Returns USDC cost to buy given NO shares at current state. |
+| `initialize` | `initialize(address _collateral, address _oracle, address _creator, uint _tradingDeadline, uint _resolveTime, uint _b, uint _collateralDecimals)` | External, once | Initializes a cloned market. Called by factory during creation. Sets `collateralScale = 10^(18 - _collateralDecimals)` for converting LMSR output to collateral units. |
+| `quoteBuyYes` | `quoteBuyYes(uint amountShares) → uint` | View | Returns USDC cost (6 decimals) to buy given YES shares. `amountShares` must be in 1e18 scale. |
+| `quoteBuyNo` | `quoteBuyNo(uint amountShares) → uint` | View | Returns USDC cost (6 decimals) to buy given NO shares. `amountShares` must be in 1e18 scale. |
 | `buyYes` | `buyYes(uint amountShares)` | External | Buy YES shares. Requires OPEN, not paused, before deadline. Pulls USDC. |
 | `buyNo` | `buyNo(uint amountShares)` | External | Buy NO shares. Requires OPEN, not paused, before deadline. Pulls USDC. |
 | `sellYes` | `sellYes(uint amountShares)` | External | Sell YES shares back. Requires OPEN, not paused, before deadline. Sends USDC refund. |
 | `sellNo` | `sellNo(uint amountShares)` | External | Sell NO shares back. Requires OPEN, not paused, before deadline. Sends USDC refund. |
 | `closeMarket` | `closeMarket()` | External, anyone | Close market after `tradingDeadline`. Sets state to CLOSED. |
 | `resolve` | `resolve(uint8 outcome)` | External, oracle only | Resolve market after `resolveTime`. Outcome: `1`=YES, `2`=NO. Auto-closes if still OPEN. |
-| `redeem` | `redeem()` | External | Claim USDC payout after resolution. Winners only. |
+| `redeem` | `redeem()` | External | Claim USDC payout after resolution. Converts winning shares (1e18) to collateral units via `/ collateralScale`. Winners only. |
 | `transferYesShares` | `transferYesShares(address _to, uint _amount)` | External | Transfer YES shares to another address. |
 | `transferNoShares` | `transferNoShares(address _to, uint _amount)` | External | Transfer NO shares to another address. |
 | `pause` | `pause()` | External, oracle only | Pause all trading. |
@@ -419,6 +419,7 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 | `marketState()` | `MarketState (uint8)` | `0`=OPEN, `1`=CLOSED, `2`=RESOLVED |
 | `resolvedOutcome()` | `uint8` | `0`=unresolved, `1`=YES won, `2`=NO won |
 | `paused()` | `bool` | Whether trading is paused |
+| `collateralScale()` | `uint` | Divisor for converting LMSR output (1e18) to collateral units. For USDC (6 decimals) this is `1e12`. |
 | `yesShares()` | `uint` | Total YES shares outstanding |
 | `noShares()` | `uint` | Total NO shares outstanding |
 | `userYes(address)` | `uint` | YES shares held by given address |
@@ -448,6 +449,7 @@ Where $a = q_{YES}/b$, $c = q_{NO}/b$, $m = \max(a, c)$. This ensures one expone
 | ------ | ------- | ----------- |
 | `COLLATERAL_TOKEN()` | `address` | USDC token address (immutable) |
 | `IMPLEMENTATION()` | `address` | PredictionMarket implementation used for clones (immutable) |
+| `COLLATERAL_DECIMALS()` | `uint` | `6` — USDC decimals (constant) |
 | `MAX_CREATION_FEE()` | `uint` | `1000e6` — hard cap on fee (constant) |
 
 **Public state variable getters:**
@@ -545,10 +547,12 @@ Each market stores a `metadataURI` pointing to a JSON document. Recommended sche
 ### Buy shares on a market
 
 ```
-1. cost = market.quoteBuyYes(1000000000000000000)         // quote 1 YES share
-2. USDC.approve(marketAddress, cost)
-3. market.buyYes(1000000000000000000)                     // buy 1 YES share
+1. cost = market.quoteBuyYes(1000000000000000000)         // quote 1 YES share (1e18)
+2. USDC.approve(marketAddress, cost)                      // cost is in USDC 6-decimal units
+3. market.buyYes(1000000000000000000)                     // buy 1 YES share (1e18)
 ```
+
+> **Warning:** Always pass share amounts in 1e18 scale. Passing raw values like `50` instead of `50e18` will cause arithmetic underflow errors due to precision loss in the LMSR fixed-point math.
 
 ### Sell shares
 
@@ -583,9 +587,13 @@ market.userNo(myAddress)    → my NO share balance
 
 ## Scale & Units Summary
 
-| Value Type    | Scale / Decimals | Example                                   |
-| ------------- | ---------------- | ----------------------------------------- |
-| USDC amounts  | 6 decimals       | `10000000` = $10.00, `1000000` = $1.00    |
-| Share amounts  | 18 decimals (1e18) | `1000000000000000000` = 1 share          |
-| `b` parameter | 18 decimals (1e18) | `1000000000000000000` = 1.0              |
-| Timestamps    | Unix seconds     | `1738972800` = Feb 8 2025 00:00:00 UTC    |
+| Value Type     | Scale / Decimals   | Example                                   |
+| -------------- | ------------------ | ----------------------------------------- |
+| USDC amounts   | 6 decimals         | `10000000` = $10.00, `1000000` = $1.00    |
+| Share amounts  | 18 decimals (1e18) | `1000000000000000000` = 1 share            |
+| `b` parameter  | 18 decimals (1e18) | `1000000000000000000` = 1.0                |
+| `collateralScale` | unitless        | `1000000000000` (1e12) for USDC            |
+| LMSR cost output | 18 decimals     | Divided by `collateralScale` → USDC amount |
+| Timestamps     | Unix seconds       | `1738972800` = Feb 8 2025 00:00:00 UTC     |
+
+> **Critical:** Share amounts and the `b` parameter MUST be in the same 1e18 scale. The LMSR cost function outputs values in 1e18, which are then divided by `collateralScale` (1e12 for USDC) to produce the actual USDC payment/refund. Passing share amounts in the wrong scale (e.g. raw `50` instead of `50e18`) will cause arithmetic underflow errors.
